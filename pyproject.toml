@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "er1-verify"
+version = "1.0.0"
+description = "ER1 — reference offline verifier for Epistemic Receipts (constraint-state receipts)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Mars Ausili", email = "mars@cruxia.ai" }]
+keywords = ["agent", "receipt", "attestation", "constraint", "verification", "ed25519", "offline"]
+dependencies = ["cryptography>=41"]
+
+[project.urls]
+Homepage = "https://github.com/Cruxia-Labs/er1-spec"
+
+[project.scripts]
+er1-verify = "er1_verify:main"
+
+[tool.setuptools]
+py-modules = ["er1_verify"]

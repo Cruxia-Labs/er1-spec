@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://er1.dev/schema/er1.schema.json",
+  "title": "ER1 — Epistemic Receipt v1",
+  "description": "A signed, chained, offline-verifiable receipt binding the deterministic CONSTRAINT STATE (the 'context-lineage' snapshot) an agent action was produced under, plus the verdict (ALLOW/HALT) the conflict predicate computed over it. The verified claim is the verdict + the chain hash; receipt_id and created_at are opaque signed metadata, excluded from the verdict recomputation. See SCOPE_OF_CERTIFICATION.md and CONFORMANCE.md.",
+  "type": "object",
+  "required": [
+    "schema_version", "receipt_id", "created_at", "chain", "pre_state_root",
+    "post_state_root", "action", "action_binding", "beliefs", "decision",
+    "coverage", "operator_version", "signature"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": { "type": "string", "const": "action-receipt/v0",
+      "description": "Frozen wire-format identifier for ER1 v1." },
+    "receipt_id": { "type": "string", "description": "Opaque UUID; signed metadata, NOT part of the verified claim." },
+    "created_at": { "type": "string", "description": "RFC3339 timestamp; signed metadata, NOT part of the verified claim." },
+    "chain": {
+      "type": "object",
+      "required": ["prev_receipt_hash", "chain_root_hash", "sequence_number"],
+      "properties": {
+        "prev_receipt_hash": { "$ref": "#/$defs/sha256" },
+        "chain_root_hash": { "$ref": "#/$defs/sha256" },
+        "sequence_number": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "pre_state_root": { "$ref": "#/$defs/sha256",
+      "description": "sha256 of the canonical-JSON of the ordered constraint snapshot (beliefs[])." },
+    "post_state_root": { "oneOf": [ { "$ref": "#/$defs/sha256" }, { "type": "null" } ],
+      "description": "Equal to pre_state_root on ALLOW; null on HALT (the action did not take effect)." },
+    "action": {
+      "type": "object",
+      "required": ["tool", "asserts", "resource"],
+      "description": "The proposed agent action being gated.",
+      "properties": {
+        "tool": { "type": "string" },
+        "asserts": { "type": "object", "additionalProperties": { "type": "string" },
+          "description": "Entity -> value the action establishes/uses (e.g. {\"env:DEPLOY_TARGET\":\"production\"})." },
+        "resource": { "type": "string" }
+      }
+    },
+    "action_binding": {
+      "type": "object",
+      "required": ["tool", "args_hash", "resource"],
+      "description": "Binds the receipt to the exact request; args_hash = sha256 of canonical-JSON {tool, asserts, resource}.",
+      "properties": {
+        "tool": { "type": "string" },
+        "args_hash": { "$ref": "#/$defs/sha256" },
+        "resource": { "type": "string" }
+      }
+    },
+    "beliefs": {
+      "type": "array",
+      "description": "The CONSTRAINT SET (a.k.a. context-lineage snapshot). Field name kept `beliefs` for v1 signature compatibility.",
+      "items": { "$ref": "#/$defs/constraint" }
+    },
+    "decision": {
+      "type": "object",
+      "required": ["verdict"],
+      "properties": {
+        "verdict": { "type": "string", "enum": ["ALLOW", "HALT"] },
+        "reason_code": { "type": ["string", "null"],
+          "enum": ["BANNED_ENTITY", "SUPERSEDED_VALUE", "CONSTRAINT_VIOLATION", "COHERENT", null] },
+        "conflicting_belief_id": { "type": ["string", "null"] },
+        "entity": { "type": ["string", "null"] },
+        "current": { "type": ["string", "null"] },
+        "proposed": { "type": ["string", "null"] }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "certified_modules": { "type": "array", "items": { "type": "string" } },
+        "exclusions": { "type": "array", "items": { "type": "string" },
+          "description": "What this receipt does NOT certify (e.g. \"nl_extraction\" — advisory constraints never gate)." }
+      }
+    },
+    "operator_version": { "type": "string" },
+    "key_tier": { "type": "string", "examples": ["ephemeral", "org", "witnessed"] },
+    "verification_tier": { "type": "string", "examples": ["local", "hosted"] },
+    "witnesses": { "type": "array", "items": { "type": "object" } },
+    "signature": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["algorithm", "public_key", "signature"],
+          "properties": {
+            "algorithm": { "type": "string", "const": "ed25519" },
+            "public_key": { "type": "string", "description": "base64url (no pad), 32-byte raw Ed25519 public key." },
+            "signature": { "type": "string", "description": "base64url (no pad) Ed25519 signature over sha256(canonical-JSON(receipt with signature=null))." }
+          }
+        },
+        { "type": "null" }
+      ]
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "constraint": {
+      "type": "object",
+      "required": ["belief_id", "belief_class", "entity", "rule", "source_kind", "status", "value"],
+      "properties": {
+        "belief_id": { "type": "string" },
+        "belief_class": { "type": "string", "enum": ["CERTIFIED", "BEST_EFFORT"],
+          "description": "CERTIFIED = deterministic/typed (halt-eligible). BEST_EFFORT = NL-extracted (advisory, never gates)." },
+        "entity": { "type": "string", "description": "e.g. env:DEPLOY_TARGET, dep:numpy, lib:boto3." },
+        "rule": { "type": "string", "enum": ["equals", "excludes", "satisfies"] },
+        "source_kind": { "type": "string", "enum": ["deterministic", "nl_extracted"] },
+        "status": { "type": "string", "enum": ["active", "superseded"] },
+        "value": { "type": "string" }
+      }
+    }
+  }
+}

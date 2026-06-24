@@ -1,0 +1,451 @@
+{
+  "fixed_inputs": {
+    "chain_seed_utf8": "golden-vectors/v0",
+    "created_at": "2026-01-01T00:00:00Z",
+    "ed25519_private_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "public_key_b64url": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+  },
+  "operator_version": "er1-ref/1",
+  "primitives": [
+    {
+      "args_hash": "sha256:da1672fe66ec505e1af2355c72132dde9fcf490d24a8d79a72fbb680f7032528",
+      "name": "equals_mismatch_halt",
+      "state_root": "sha256:2b30e439e72218252410340b3b64274d66e8f291456046525e4731ba57b729ce"
+    },
+    {
+      "args_hash": "sha256:70bacbbd3dbf6ccea5f20b7c16a7b030050ffc4701005ad13753a3b8449baaaf",
+      "name": "banned_entity_halt",
+      "state_root": "sha256:470fbf85fe4b1a3e8a8b0468e73a68cc882b3cd74418e2eb3c8648033a7de4eb"
+    },
+    {
+      "args_hash": "sha256:095c219155d0effca9b41777ef751a5f91008994f6df870d24f1499ac8b9a0cc",
+      "name": "constraint_violation_halt",
+      "state_root": "sha256:e4ecb7a68266a52065f87abb99892760a064c8928752956cc2c4776958c03298"
+    },
+    {
+      "args_hash": "sha256:d601790b532f604f93c73f5a818da2f696a08df75a5755040ce37a715ee9eb18",
+      "name": "coherent_allow",
+      "state_root": "sha256:2b30e439e72218252410340b3b64274d66e8f291456046525e4731ba57b729ce"
+    },
+    {
+      "args_hash": "sha256:2d996ae393d67d33617324be2cda5ff459a2937799a605c1b6912623cc0114ed",
+      "name": "amber_belief_does_not_halt",
+      "state_root": "sha256:b2bb27fbbaec8c91239ccee40d0bd41872fb2abae46ae9ba34910a1fa195ce24"
+    },
+    {
+      "args_hash": "sha256:da1672fe66ec505e1af2355c72132dde9fcf490d24a8d79a72fbb680f7032528",
+      "name": "superseded_belief_skipped",
+      "state_root": "sha256:94a64d90120a902c7f48ee7ef8c547b709a32727f9809bbe3182be31acf668e5"
+    },
+    {
+      "chain_root": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+      "name": "chain_root_from_seed"
+    }
+  ],
+  "receipts": [
+    {
+      "name": "equals_mismatch_halt",
+      "reason_code": "SUPERSEDED_VALUE",
+      "receipt": {
+        "action": {
+          "asserts": {
+            "env:DEPLOY_TARGET": "production"
+          },
+          "resource": "k8s://prod",
+          "tool": "deploy"
+        },
+        "action_binding": {
+          "args_hash": "sha256:da1672fe66ec505e1af2355c72132dde9fcf490d24a8d79a72fbb680f7032528",
+          "resource": "k8s://prod",
+          "tool": "deploy"
+        },
+        "beliefs": [
+          {
+            "belief_class": "CERTIFIED",
+            "belief_id": "env:DEPLOY_TARGET",
+            "entity": "env:DEPLOY_TARGET",
+            "rule": "equals",
+            "source_kind": "deterministic",
+            "status": "active",
+            "value": "staging"
+          }
+        ],
+        "chain": {
+          "chain_root_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "prev_receipt_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "sequence_number": 0
+        },
+        "coverage": {
+          "certified_modules": [
+            "typed-config"
+          ],
+          "exclusions": [
+            "nl_extraction"
+          ]
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "decision": {
+          "conflicting_belief_id": "env:DEPLOY_TARGET",
+          "current": "staging",
+          "entity": "env:DEPLOY_TARGET",
+          "proposed": "production",
+          "reason_code": "SUPERSEDED_VALUE",
+          "verdict": "HALT"
+        },
+        "key_tier": "ephemeral",
+        "operator_version": "er1-ref/1",
+        "post_state_root": null,
+        "pre_state_root": "sha256:2b30e439e72218252410340b3b64274d66e8f291456046525e4731ba57b729ce",
+        "receipt_id": "golden-0000",
+        "schema_version": "action-receipt/v0",
+        "signature": {
+          "algorithm": "ed25519",
+          "public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+          "signature": "T9w3-IC-hsBk4MZ--JjOdBaIADduIiuGMTKM8SLfnGANq2dDNq6hmx96U1wJZ3m0pVI2PjPghUFmmvqE2gB4BQ"
+        },
+        "verification_tier": "local",
+        "witnesses": []
+      },
+      "receipt_hash": "sha256:3c2034ac1c353bdd7aa8f322c15d409f0a9ece3f3a82c2caef9889b90c4b9095",
+      "signature": "T9w3-IC-hsBk4MZ--JjOdBaIADduIiuGMTKM8SLfnGANq2dDNq6hmx96U1wJZ3m0pVI2PjPghUFmmvqE2gB4BQ",
+      "verdict": "HALT"
+    },
+    {
+      "name": "banned_entity_halt",
+      "reason_code": "BANNED_ENTITY",
+      "receipt": {
+        "action": {
+          "asserts": {
+            "lib:boto3": "import"
+          },
+          "resource": "src/backup.py",
+          "tool": "write_file"
+        },
+        "action_binding": {
+          "args_hash": "sha256:70bacbbd3dbf6ccea5f20b7c16a7b030050ffc4701005ad13753a3b8449baaaf",
+          "resource": "src/backup.py",
+          "tool": "write_file"
+        },
+        "beliefs": [
+          {
+            "belief_class": "CERTIFIED",
+            "belief_id": "lib:boto3",
+            "entity": "lib:boto3",
+            "rule": "excludes",
+            "source_kind": "deterministic",
+            "status": "active",
+            "value": "banned"
+          }
+        ],
+        "chain": {
+          "chain_root_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "prev_receipt_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "sequence_number": 0
+        },
+        "coverage": {
+          "certified_modules": [
+            "typed-config"
+          ],
+          "exclusions": [
+            "nl_extraction"
+          ]
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "decision": {
+          "conflicting_belief_id": "lib:boto3",
+          "current": "banned",
+          "entity": "lib:boto3",
+          "proposed": "import",
+          "reason_code": "BANNED_ENTITY",
+          "verdict": "HALT"
+        },
+        "key_tier": "ephemeral",
+        "operator_version": "er1-ref/1",
+        "post_state_root": null,
+        "pre_state_root": "sha256:470fbf85fe4b1a3e8a8b0468e73a68cc882b3cd74418e2eb3c8648033a7de4eb",
+        "receipt_id": "golden-0001",
+        "schema_version": "action-receipt/v0",
+        "signature": {
+          "algorithm": "ed25519",
+          "public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+          "signature": "Lbh2RGJRI-QVJwOuTJvVSp2c4jJv2uszX90U4ZWhH9CBuTR9zNRDB8tZ_MEnUbikyHA9TYIBCFS-p0haUmCrCA"
+        },
+        "verification_tier": "local",
+        "witnesses": []
+      },
+      "receipt_hash": "sha256:94196b8debc236bb164502efcba989e0485e5e649bba7b7c5066289c27b88ded",
+      "signature": "Lbh2RGJRI-QVJwOuTJvVSp2c4jJv2uszX90U4ZWhH9CBuTR9zNRDB8tZ_MEnUbikyHA9TYIBCFS-p0haUmCrCA",
+      "verdict": "HALT"
+    },
+    {
+      "name": "constraint_violation_halt",
+      "reason_code": "CONSTRAINT_VIOLATION",
+      "receipt": {
+        "action": {
+          "asserts": {
+            "dep:numpy": "1.26.1"
+          },
+          "resource": "requirements.txt",
+          "tool": "pip_install"
+        },
+        "action_binding": {
+          "args_hash": "sha256:095c219155d0effca9b41777ef751a5f91008994f6df870d24f1499ac8b9a0cc",
+          "resource": "requirements.txt",
+          "tool": "pip_install"
+        },
+        "beliefs": [
+          {
+            "belief_class": "CERTIFIED",
+            "belief_id": "dep:numpy",
+            "entity": "dep:numpy",
+            "rule": "satisfies",
+            "source_kind": "deterministic",
+            "status": "active",
+            "value": ">=2.0"
+          }
+        ],
+        "chain": {
+          "chain_root_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "prev_receipt_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "sequence_number": 0
+        },
+        "coverage": {
+          "certified_modules": [
+            "typed-config"
+          ],
+          "exclusions": [
+            "nl_extraction"
+          ]
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "decision": {
+          "conflicting_belief_id": "dep:numpy",
+          "current": ">=2.0",
+          "entity": "dep:numpy",
+          "proposed": "1.26.1",
+          "reason_code": "CONSTRAINT_VIOLATION",
+          "verdict": "HALT"
+        },
+        "key_tier": "ephemeral",
+        "operator_version": "er1-ref/1",
+        "post_state_root": null,
+        "pre_state_root": "sha256:e4ecb7a68266a52065f87abb99892760a064c8928752956cc2c4776958c03298",
+        "receipt_id": "golden-0002",
+        "schema_version": "action-receipt/v0",
+        "signature": {
+          "algorithm": "ed25519",
+          "public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+          "signature": "ZNag43G0qTAUiar25whl_0rSKPZ70iHJaFaDo23UtvYIzksIdnLzVECBsDEDqXN0Z6aMmVweDzvphr7PtbReBQ"
+        },
+        "verification_tier": "local",
+        "witnesses": []
+      },
+      "receipt_hash": "sha256:a168dea23a0274474266ebeb15e64c0f8ca259076857da3eb3753a60132b63e6",
+      "signature": "ZNag43G0qTAUiar25whl_0rSKPZ70iHJaFaDo23UtvYIzksIdnLzVECBsDEDqXN0Z6aMmVweDzvphr7PtbReBQ",
+      "verdict": "HALT"
+    },
+    {
+      "name": "coherent_allow",
+      "reason_code": null,
+      "receipt": {
+        "action": {
+          "asserts": {
+            "env:DEPLOY_TARGET": "staging"
+          },
+          "resource": "k8s://staging",
+          "tool": "deploy"
+        },
+        "action_binding": {
+          "args_hash": "sha256:d601790b532f604f93c73f5a818da2f696a08df75a5755040ce37a715ee9eb18",
+          "resource": "k8s://staging",
+          "tool": "deploy"
+        },
+        "beliefs": [
+          {
+            "belief_class": "CERTIFIED",
+            "belief_id": "env:DEPLOY_TARGET",
+            "entity": "env:DEPLOY_TARGET",
+            "rule": "equals",
+            "source_kind": "deterministic",
+            "status": "active",
+            "value": "staging"
+          }
+        ],
+        "chain": {
+          "chain_root_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "prev_receipt_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "sequence_number": 0
+        },
+        "coverage": {
+          "certified_modules": [
+            "typed-config"
+          ],
+          "exclusions": [
+            "nl_extraction"
+          ]
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "decision": {
+          "conflicting_belief_id": null,
+          "current": null,
+          "entity": null,
+          "proposed": null,
+          "reason_code": null,
+          "verdict": "ALLOW"
+        },
+        "key_tier": "ephemeral",
+        "operator_version": "er1-ref/1",
+        "post_state_root": "sha256:2b30e439e72218252410340b3b64274d66e8f291456046525e4731ba57b729ce",
+        "pre_state_root": "sha256:2b30e439e72218252410340b3b64274d66e8f291456046525e4731ba57b729ce",
+        "receipt_id": "golden-0003",
+        "schema_version": "action-receipt/v0",
+        "signature": {
+          "algorithm": "ed25519",
+          "public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+          "signature": "3KIql6TQw-NkcKxYULp6a8IrvDH6fqsqIzQv-E86-XFaD36kHMoSWJheLMDhwiYK-zkN9XFvPdPKiGjzX99XBA"
+        },
+        "verification_tier": "local",
+        "witnesses": []
+      },
+      "receipt_hash": "sha256:2ad40c4a396beb1b5a7c379916b48d84ffed53a51daa8893e977ad893a0ebf93",
+      "signature": "3KIql6TQw-NkcKxYULp6a8IrvDH6fqsqIzQv-E86-XFaD36kHMoSWJheLMDhwiYK-zkN9XFvPdPKiGjzX99XBA",
+      "verdict": "ALLOW"
+    },
+    {
+      "name": "amber_belief_does_not_halt",
+      "reason_code": null,
+      "receipt": {
+        "action": {
+          "asserts": {
+            "ui.style": "brutalist"
+          },
+          "resource": "ui/theme",
+          "tool": "set_style"
+        },
+        "action_binding": {
+          "args_hash": "sha256:2d996ae393d67d33617324be2cda5ff459a2937799a605c1b6912623cc0114ed",
+          "resource": "ui/theme",
+          "tool": "set_style"
+        },
+        "beliefs": [
+          {
+            "belief_class": "BEST_EFFORT",
+            "belief_id": "ui.style",
+            "entity": "ui.style",
+            "rule": "equals",
+            "source_kind": "nl_extracted",
+            "status": "active",
+            "value": "minimalist"
+          }
+        ],
+        "chain": {
+          "chain_root_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "prev_receipt_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "sequence_number": 0
+        },
+        "coverage": {
+          "certified_modules": [
+            "typed-config"
+          ],
+          "exclusions": [
+            "nl_extraction"
+          ]
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "decision": {
+          "conflicting_belief_id": null,
+          "current": null,
+          "entity": null,
+          "proposed": null,
+          "reason_code": null,
+          "verdict": "ALLOW"
+        },
+        "key_tier": "ephemeral",
+        "operator_version": "er1-ref/1",
+        "post_state_root": "sha256:b2bb27fbbaec8c91239ccee40d0bd41872fb2abae46ae9ba34910a1fa195ce24",
+        "pre_state_root": "sha256:b2bb27fbbaec8c91239ccee40d0bd41872fb2abae46ae9ba34910a1fa195ce24",
+        "receipt_id": "golden-0004",
+        "schema_version": "action-receipt/v0",
+        "signature": {
+          "algorithm": "ed25519",
+          "public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+          "signature": "qTUOyg0jQI0SjmVkHiTcW8fpJOBzuGHndryqsTjB1ktdWkJxtaoapXix6utv17Ult0sEd_HZWKKeAPFyE607DQ"
+        },
+        "verification_tier": "local",
+        "witnesses": []
+      },
+      "receipt_hash": "sha256:d9c2e63c0b1c0cb20bbe6ee0dc34ad129fd23af99b22250509987d349461c54e",
+      "signature": "qTUOyg0jQI0SjmVkHiTcW8fpJOBzuGHndryqsTjB1ktdWkJxtaoapXix6utv17Ult0sEd_HZWKKeAPFyE607DQ",
+      "verdict": "ALLOW"
+    },
+    {
+      "name": "superseded_belief_skipped",
+      "reason_code": null,
+      "receipt": {
+        "action": {
+          "asserts": {
+            "env:DEPLOY_TARGET": "production"
+          },
+          "resource": "k8s://prod",
+          "tool": "deploy"
+        },
+        "action_binding": {
+          "args_hash": "sha256:da1672fe66ec505e1af2355c72132dde9fcf490d24a8d79a72fbb680f7032528",
+          "resource": "k8s://prod",
+          "tool": "deploy"
+        },
+        "beliefs": [
+          {
+            "belief_class": "CERTIFIED",
+            "belief_id": "env:DEPLOY_TARGET",
+            "entity": "env:DEPLOY_TARGET",
+            "rule": "equals",
+            "source_kind": "deterministic",
+            "status": "superseded",
+            "value": "staging"
+          }
+        ],
+        "chain": {
+          "chain_root_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "prev_receipt_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "sequence_number": 0
+        },
+        "coverage": {
+          "certified_modules": [
+            "typed-config"
+          ],
+          "exclusions": [
+            "nl_extraction"
+          ]
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "decision": {
+          "conflicting_belief_id": null,
+          "current": null,
+          "entity": null,
+          "proposed": null,
+          "reason_code": null,
+          "verdict": "ALLOW"
+        },
+        "key_tier": "ephemeral",
+        "operator_version": "er1-ref/1",
+        "post_state_root": "sha256:94a64d90120a902c7f48ee7ef8c547b709a32727f9809bbe3182be31acf668e5",
+        "pre_state_root": "sha256:94a64d90120a902c7f48ee7ef8c547b709a32727f9809bbe3182be31acf668e5",
+        "receipt_id": "golden-0005",
+        "schema_version": "action-receipt/v0",
+        "signature": {
+          "algorithm": "ed25519",
+          "public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+          "signature": "V4Ov1FfT-w1JkPXld_NNB3gxJCV7lnlAjQ6HUmSiX_t7xkZc5IM-r9353dkpIcGUy8NQ8Qe-ei5vRvjK1PJiDA"
+        },
+        "verification_tier": "local",
+        "witnesses": []
+      },
+      "receipt_hash": "sha256:34703397880b50d270eebe576307a38f5943f56eff945785972cb1c0ffbc1b6f",
+      "signature": "V4Ov1FfT-w1JkPXld_NNB3gxJCV7lnlAjQ6HUmSiX_t7xkZc5IM-r9353dkpIcGUy8NQ8Qe-ei5vRvjK1PJiDA",
+      "verdict": "ALLOW"
+    }
+  ],
+  "schema_version": "action-receipt/v0",
+  "spec": "open-action-receipt"
+}
