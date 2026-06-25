@@ -80,13 +80,26 @@ function verCmp(a, b) {
   }
   return 0;
 }
+function compatible(proposed, constraint) {
+  // PEP 440 compatible-release (~=): proposed >= constraint AND shares its prefix (all but the
+  // constraint's last component must match). ~=2.0 allows 2.5 not 3.0; ~=2.0.1 allows 2.0.5 not 2.1.0.
+  if (verCmp(proposed, constraint) < 0) return false;
+  const cv = parseVer(constraint);
+  if (cv.length < 2) return true;
+  const prefix = cv.slice(0, -1);
+  const pv = parseVer(proposed);
+  for (let i = 0; i < prefix.length; i++) if ((pv[i] ?? 0) !== prefix[i]) return false;
+  return true;
+}
 function satisfies(proposed, constraint) {
   const c = constraint.trim();
   for (const op of [">=", "<=", "==", "~=", ">", "<", "="]) {
     if (c.startsWith(op)) {
-      const cmp = verCmp(proposed, c.slice(op.length).trim());
+      const target = c.slice(op.length).trim();
+      if (op === "~=") return compatible(proposed, target);
+      const cmp = verCmp(proposed, target);
       return { ">=": cmp >= 0, ">": cmp > 0, "<=": cmp <= 0, "<": cmp < 0,
-               "==": cmp === 0, "=": cmp === 0, "~=": cmp === 0 }[op];
+               "==": cmp === 0, "=": cmp === 0 }[op];
     }
   }
   return verCmp(proposed, c) === 0;

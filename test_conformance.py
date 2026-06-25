@@ -50,10 +50,24 @@ def test_cli_verifies_the_golden_bundle():
     assert ER1.main([str(HERE / "golden_vectors.json")]) == 0
 
 
+def test_tilde_equals_is_compatible_release():
+    # `~=2.0` is PEP 440 compatible-release (>=2.0, <3.0), NOT exact match. (Runs without Node.)
+    def doc(proposed):
+        return {"decision": {"verdict": "ALLOW", "reason_code": None, "conflicting_belief_id": None},
+                "beliefs": [{"belief_id": "dep:x", "belief_class": "CERTIFIED", "entity": "dep:x",
+                             "rule": "satisfies", "source_kind": "deterministic", "status": "active", "value": "~=2.0"}],
+                "action": {"tool": "pip_install", "asserts": {"dep:x": proposed}, "resource": "req.txt"},
+                "action_binding": {"args_hash": "sha256:" + "0" * 64}, "pre_state_root": "sha256:" + "0" * 64,
+                "signature": {"algorithm": "ed25519", "public_key": "AA", "signature": "AA"}}
+    assert ER1.verify(doc("2.5"))["recomputed_verdict"] == "ALLOW"   # 2.5 satisfies ~=2.0
+    assert ER1.verify(doc("3.0"))["recomputed_verdict"] == "HALT"    # 3.0 does not
+
+
 if __name__ == "__main__":
     test_every_golden_receipt_verifies()
     test_signatures_use_the_pinned_key()
     test_tamper_is_caught_by_both_signature_and_recompute()
     test_amber_and_superseded_resolve_to_allow_in_the_recompute()
     test_cli_verifies_the_golden_bundle()
+    test_tilde_equals_is_compatible_release()
     print("ER1 conformance: all checks passed ✓")

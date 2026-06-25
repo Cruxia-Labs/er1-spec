@@ -46,6 +46,28 @@ from the receipt's own contents, offline, with no network and no access to our s
 - **Not safety, correctness of code, or absence of harm.** The receipt is a record of
   belief-coherence, not a guarantee about outcomes.
 
+## Whose keys count (the trust boundary)
+
+A receipt's signature proves **integrity** — the recorded content was not altered since signing.
+It does **not** establish **authority** — that the *signer* is one you should trust. Anyone can
+generate a keypair and sign a coherent receipt, and the math will check out. **Coherence, not
+authority. Admissible, not accurate.**
+
+Deciding *whose* keys count is therefore the **relying party's policy, not part of this format** —
+and deliberately so. A receipt format that hard-coded a single issuer's trust root would be a
+*centralized* standard: the thing an ecosystem routes around. ER1 stays neutral so it can be
+adopted across vendors. Concretely:
+
+- **If you only verify your own receipts** (the common case — a local tool checking its own
+  repo), trust is not even a question: you signed them.
+- **If you rely on someone else's receipt**, pin the public keys you accept. Every verifier
+  exposes the receipt's signing public key for exactly this — a one-line allowlist is the whole
+  mechanism.
+- **When a stronger trust layer is needed** (organization keys, witnessed co-signatures, a
+  third-party attestation tier), it slots into seams the signed schema already reserves —
+  `key_tier`, `witnesses[]`, and `verification_tier` — so it can be added **without a format
+  change**. The trust layer is deferred, not foreclosed.
+
 ## The determinism scope (read this before relying on byte-equality)
 
 The **verified claim** is the **verdict plus the chain hash**, each a pure function of the

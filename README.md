@@ -34,6 +34,7 @@ in the vectors is test-only — never sign a production receipt with it.)
 | [`CONFORMANCE.md`](CONFORMANCE.md) | How any implementation (Rust/WASM/Go/TS) proves itself conformant. |
 | [`SCOPE_OF_CERTIFICATION.md`](SCOPE_OF_CERTIFICATION.md) | Plain-English statement of exactly what a receipt does and does **not** certify, and the breach definition. |
 | [`test_conformance.py`](test_conformance.py) · [`test_cross_language.py`](test_cross_language.py) | The Python verifier accepts every golden receipt and catches tampering; the JS verifier computes byte-identical hashes and the same verdicts. |
+| [`IMPLEMENTATIONS.md`](IMPLEMENTATIONS.md) | The conformance roster — the two reference verifiers, and an open invitation to add an independent one in your language. |
 
 ## The constraint set
 
@@ -71,4 +72,5 @@ frozen cross-language conformance suite.
 
 ## License
 
-Released under the MIT License (see [`LICENSE`](LICENSE)). © 2026 Cruxia.
+Released under the **Apache License 2.0** (see [`LICENSE`](LICENSE)) — chosen for its explicit
+patent grant, the standard-grade license for an open format adopters can build on. © 2026 Cruxia.

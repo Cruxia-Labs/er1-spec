@@ -98,3 +98,23 @@ def test_unicode_canonicalization_is_byte_identical(tmp_path):
     p.write_text(json.dumps(crafted, ensure_ascii=False), encoding="utf-8")
     out = _run(str(p)).stdout
     assert f"hash={py_hash[:18]}" in out, f"canon diverged on Unicode: py={py_hash[:18]} | js={out}"
+
+
+def test_tilde_equals_is_compatible_release_not_exact(tmp_path):
+    """`~=2.0` is PEP 440 compatible-release (>=2.0, <3.0), NOT exact match: 2.5 must be ALLOWED and
+    3.0 HALTed. The old code treated ~= as == and wrongly HALTed 2.5. Python and JS must agree."""
+    def doc(proposed):
+        return {
+            "schema_version": "action-receipt/v0",
+            "decision": {"verdict": "ALLOW", "reason_code": None, "conflicting_belief_id": None},
+            "beliefs": [{"belief_id": "dep:lib", "belief_class": "CERTIFIED", "entity": "dep:lib",
+                         "rule": "satisfies", "source_kind": "deterministic", "status": "active", "value": "~=2.0"}],
+            "action": {"tool": "pip_install", "asserts": {"dep:lib": proposed}, "resource": "requirements.txt"},
+            "action_binding": {"tool": "pip_install", "args_hash": "sha256:" + "0" * 64, "resource": "requirements.txt"},
+            "pre_state_root": "sha256:" + "0" * 64,
+            "signature": {"algorithm": "ed25519", "public_key": "AA", "signature": "AA"},
+        }
+    assert ER1.verify(doc("2.5"))["recomputed_verdict"] == "ALLOW"   # 2.5 satisfies ~=2.0
+    assert ER1.verify(doc("3.0"))["recomputed_verdict"] == "HALT"    # 3.0 does not
+    p = tmp_path / "tilde.json"; p.write_text(json.dumps(doc("2.5")))
+    assert "recomputed ALLOW" in _run(str(p)).stdout                 # JS agrees on the once-buggy case

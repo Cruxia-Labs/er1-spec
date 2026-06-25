@@ -136,7 +136,7 @@ def _parse_ver(s):
     for part in str(s).strip().split("."):
         num = ""
         for ch in part:
-            if ch.isdigit():
+            if "0" <= ch <= "9":          # ASCII digits only — matches er1_verify.mjs (no Unicode digits)
                 num += ch
             else:
                 break
@@ -152,14 +152,30 @@ def _ver_cmp(a, b):
     return (pa > pb) - (pa < pb)
 
 
+def _compatible(proposed, constraint):
+    # PEP 440 compatible-release (~=): proposed >= constraint AND shares its prefix (all but the
+    # constraint's last component must match). ~=2.0 allows 2.5 not 3.0; ~=2.0.1 allows 2.0.5 not 2.1.0.
+    if _ver_cmp(proposed, constraint) < 0:
+        return False
+    cv = _parse_ver(constraint)
+    if len(cv) < 2:
+        return True
+    prefix = cv[:-1]
+    pv = _parse_ver(proposed)
+    pv += (0,) * (len(prefix) - len(pv))
+    return pv[:len(prefix)] == prefix
+
+
 def _satisfies(proposed, constraint):
     c = constraint.strip()
     for op in (">=", "<=", "==", "~=", ">", "<", "="):
         if c.startswith(op):
             target = c[len(op):].strip()
+            if op == "~=":
+                return _compatible(proposed, target)
             cmp = _ver_cmp(proposed, target)
             return {">=": cmp >= 0, ">": cmp > 0, "<=": cmp <= 0, "<": cmp < 0,
-                    "==": cmp == 0, "=": cmp == 0, "~=": cmp == 0}[op]
+                    "==": cmp == 0, "=": cmp == 0}[op]
     return _ver_cmp(proposed, c) == 0
 
 
