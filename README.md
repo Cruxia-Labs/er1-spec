@@ -1,6 +1,6 @@
 # ER1 — Epistemic Receipt v1
 
-**A cryptographic standard for proving the constraint state an autonomous AI agent's action was produced under** — portable, offline-verifiable, and reproducible in any language.
+**An open, offline-verifiable format for proving the constraint state an autonomous AI agent's action was produced under** — portable, recomputable in any language, with no trust in the producer.
 
 <p align="center"><img src="media/verify_hero.gif" alt="Two independent verifiers re-deriving the same verdict from the frozen golden vectors, offline" width="760"></p>
 
@@ -19,7 +19,7 @@ VERIFIED ✓  golden_vectors.json:coherent_allow          verdict=ALLOW (recompu
 ```
 
 Tamper a single byte and it says `FAILED ✗`. The same vectors verify identically in JavaScript with no
-dependencies — `node er1_verify.mjs golden_vectors.json` — proving the format is a standard, not one tool's
+dependencies — `node er1_verify.mjs golden_vectors.json` — showing the format is reproducible across languages, not one tool's
 output. (`pip install -e .` adds an `er1-verify` command for checking your own receipts; the Ed25519 key pinned
 in the vectors is test-only — never sign a production receipt with it.)
 
@@ -58,19 +58,23 @@ signed metadata. See [`SCOPE_OF_CERTIFICATION.md`](SCOPE_OF_CERTIFICATION.md).
 ## Conformance
 
 An implementation is conformant **iff it reproduces every entry in `golden_vectors.json`** from the same pinned
-inputs — the canonical-JSON serialization (RFC 8785), the primitive hashes, the conflict-predicate verdict, and
+inputs — the canonical-JSON serialization (RFC 8785-inspired; see [`CONFORMANCE.md`](CONFORMANCE.md)), the primitive hashes, the conflict-predicate verdict, and
 the Ed25519 signatures. This repo ships **two** conformant implementations (Python and JavaScript) that produce
-byte-identical hashes on the golden vectors; that mutual acceptance across languages is what makes ER1 a standard
-rather than one vendor's log. See [`CONFORMANCE.md`](CONFORMANCE.md).
+byte-identical hashes on the golden vectors; that mutual acceptance across languages makes ER1 reproducible — not just one vendor's log. (We reserve the word "standard" for when a party other than us recomputes these vectors; see [`IMPLEMENTATIONS.md`](IMPLEMENTATIONS.md).) See [`CONFORMANCE.md`](CONFORMANCE.md).
 
 ## Prior art
 
 The closest related work is **Context Lineage Assurance for Non-Human Identities** (arXiv:2509.18415), which
 describes signed, hash-chained context-state proofs verifiable without reading the full context history. ER1
-differs by being a productized, formally-grounded, open format with a machine-checked decision procedure and a
-frozen cross-language conformance suite.
+differs by being a productized, open format with an explicit, public decision procedure and a frozen
+cross-language conformance suite.
 
 ## License
 
 Released under the **Apache License 2.0** (see [`LICENSE`](LICENSE)) — chosen for its explicit
-patent grant, the standard-grade license for an open format adopters can build on. © 2026 Cruxia.
+patent grant, the license an open format's adopters can build on. © 2026 Cruxia.
+
+
+---
+
+*ER1 is small on purpose: a way to prove the constraint state an action was taken under, recomputable by someone who doesn't trust the producer. [sagrada-linter](https://github.com/Cruxia-Labs/sagrada-linter) is the first tool that emits one — and we'd rather the format outlive any one tool, including ours. → [Cruxia-Labs](https://github.com/Cruxia-Labs)*

@@ -1,4 +1,4 @@
-# Conformance — proving a verifier implements the standard
+# Conformance — proving a verifier reproduces the format
 
 The Action Receipt is an open format. An implementation in any language (Rust, WASM, Go, TS, …)
 is **conformant** iff it reproduces every entry in [`golden_vectors.json`](golden_vectors.json)
@@ -20,8 +20,8 @@ vectors pin them only so serialization can be compared exactly.
    - `state_root` = `sha256:` of canonical-JSON of the ordered belief snapshot,
    - `args_hash` = `sha256:` of canonical-JSON of `{tool, asserts, resource}`,
    - `chain_root_from_seed` = `sha256:` of the chain seed.
-   Canonical JSON is a pinned, RFC 8785-style serialization: keys sorted by UTF-16 code unit,
-   NFC-normalized strings, non-ASCII escaped as `\uXXXX` (surrogate pairs for astral planes), no
+   Canonical JSON is a pinned, RFC 8785-inspired serialization: keys sorted by UTF-16 code unit,
+   NFC-normalized strings, non-ASCII escaped as `\uXXXX` (surrogate pairs for astral planes — a deliberate deviation from RFC 8785 §3.2.2.2, which emits raw UTF-8; we pin escaping so the two reference verifiers stay byte-identical, and `golden_vectors.json` fixes it exactly), no
    insignificant whitespace, UTF-8 bytes. `golden_vectors.json` is the byte-exact contract — get it
    identical and everything else follows. (Receipt values are ASCII strings/enums today; the two
    reference verifiers are cross-checked on Unicode too, so the contract holds beyond ASCII.)
@@ -70,4 +70,4 @@ included — reproducible byte-for-byte, so any conformant implementation reache
 result. A new implementation supplies its own harness that loads `golden_vectors.json`, recomputes
 each field, and asserts equality. When it passes, it is conformant — and a receipt it produces will
 verify under both reference verifiers, and vice versa. That mutual acceptance across independent
-implementations is what makes the format a standard rather than one vendor's log.
+implementations is what would make the format a standard rather than one vendor's log — until a second party does it, ER1 is an open format we publish and verify ourselves.
