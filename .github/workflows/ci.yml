@@ -1,0 +1,27 @@
+name: CI
+
+# Continuously prove the core claim: the two reference verifiers reproduce golden_vectors.json
+# byte-for-byte, and a one-byte tamper is rejected — in Python AND JavaScript, on every push.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        run: pip install cryptography pytest
+      - name: Conformance — golden vectors verify byte-for-byte in Python AND JavaScript
+        run: pytest test_conformance.py test_cross_language.py -q
