@@ -24,6 +24,8 @@ jobs:
       - name: Install
         run: pip install cryptography pytest
       - name: Conformance — Python + cross-language suites (`python -m` so er1_verify imports)
-        run: python -m pytest test_conformance.py test_cross_language.py -q
+        run: python -m pytest test_conformance.py test_cross_language.py tests -q
       - name: Explicit JS check — node reproduces the vectors (fails loudly if node is unusable)
         run: node er1_verify.mjs golden_vectors.json
+      - name: Browser verifier — WebCrypto-only module under Node's globalThis.crypto (golden vectors + tamper pairs)
+        run: node tests/test_browser_verifier.mjs

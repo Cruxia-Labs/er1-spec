@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ER1 — in-browser receipt verifier (test page)</title>
+<!--
+  Internal test page for verify/er1_verify.browser.mjs — NOT a product UI.
+  Paste or drop an ER1 receipt JSON (or the golden_vectors.json bundle); verification runs
+  entirely in this page via WebCrypto. Zero network requests: no external scripts, styles,
+  fonts, or data are loaded, and the module itself performs no I/O.
+
+  ES modules do not load from file:// in most browsers; serve the repo root instead:
+      python3 -m http.server 8000        # then open http://localhost:8000/verify/
+-->
+<style>
+  body { font-family: ui-monospace, Menlo, Consolas, monospace; max-width: 60rem;
+         margin: 2rem auto; padding: 0 1rem; background: #faf7f2; color: #222; }
+  h1 { font-size: 1.1rem; }
+  textarea { width: 100%; height: 14rem; box-sizing: border-box; font: inherit; }
+  #drop { border: 2px dashed #999; padding: .6rem; margin: .5rem 0; color: #555; }
+  #drop.over { border-color: #3a7; background: #eefaf2; }
+  button { font: inherit; padding: .35rem 1rem; }
+  .verified { color: #176e2e; } .failed { color: #a11212; } .unsupported { color: #8a5a00; }
+  ul { margin: .2rem 0 .6rem 1.4rem; }
+  li.err { color: #a11212; }
+  .item { margin: .5rem 0; padding: .4rem .6rem; background: #fff; border: 1px solid #ddd; }
+  small { color: #666; }
+</style>
+</head>
+<body>
+<h1>ER1 in-browser verifier — internal test page</h1>
+<p><small>Recomputes the verdict from the receipt's signed pre-state and checks the Ed25519
+signature, action binding, and state-root — entirely in this page (WebCrypto; zero network).
+Accepts a single receipt or a <code>golden_vectors.json</code> bundle.</small></p>
+
+<div id="drop">drop a receipt .json here — or paste below</div>
+<textarea id="input" spellcheck="false" placeholder='{"schema_version": "action-receipt/v0", ...}'></textarea>
+<p><button id="run">Verify</button></p>
+<div id="out"></div>
+
+<script type="module">
+  import { verify, verifyJson, receiptHash, Er1UnsupportedCryptoError } from "./er1_verify.browser.mjs";
+
+  // Exposed for the cross-engine harness (tests/run_browser_matrix.py); not used by the page.
+  window.__er1 = { verify, verifyJson, receiptHash, Er1UnsupportedCryptoError };
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  // A golden_vectors bundle wraps each receipt as {name, receipt, ...}; a bare receipt has `decision`.
+  function receiptsFrom(doc) {
+    if (doc && Array.isArray(doc.receipts)) return doc.receipts.map((w) => [w.name, w.receipt]);
+    return [[null, doc]];
+  }
+
+  async function run() {
+    const out = $("out");
+    out.innerHTML = "";
+    let doc;
+    try { doc = JSON.parse($("input").value); }
+    catch (e) { out.innerHTML = `<div class="item failed">not JSON: ${esc(e.message)}</div>`; return; }
+    for (const [name, r] of receiptsFrom(doc)) {
+      const div = document.createElement("div");
+      div.className = "item";
+      try {
+        const res = await verify(r);
+        const hash = await receiptHash(r);
+        const v = (r.decision ?? {}).verdict;
+        div.innerHTML =
+          `<span class="${res.ok ? "verified" : "failed"}">${res.ok ? "VERIFIED ✓" : "FAILED ✗"}</span>` +
+          (name ? ` <b>${esc(name)}</b>` : "") +
+          ` &nbsp;verdict=${esc(v)} (recomputed ${res.recomputedVerdict})<br>` +
+          `<small>hash=${esc(hash)}</small>` +
+          (res.errors.length
+            ? "<ul>" + res.errors.map((e) => `<li class="err">! ${esc(e)}</li>`).join("") + "</ul>"
+            : "");
+      } catch (e) {
+        const cls = e instanceof Er1UnsupportedCryptoError ? "unsupported" : "failed";
+        div.innerHTML = `<span class="${cls}">ERROR</span> ${esc(e.name)}: ${esc(e.message)}`;
+      }
+      out.appendChild(div);
+    }
+  }
+
+  $("run").addEventListener("click", run);
+
+  const drop = $("drop");
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", async (e) => {
+    e.preventDefault(); drop.classList.remove("over");
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!f) return;
+    $("input").value = await f.text();
+    run();
+  });
+</script>
+</body>
+</html>

@@ -17,8 +17,9 @@ file is the contract; passing it *is* the bar. No sign-off, no style review, no 
 |---|---|---|---|
 | [`er1_verify.py`](er1_verify.py) | Python | ✅ conformant | stdlib + `cryptography`; zero project imports. |
 | [`er1_verify.mjs`](er1_verify.mjs) | JavaScript (Node) | ✅ conformant | `node:crypto` only, no `npm install`; byte-identical to the Python verifier. |
+| [`verify/er1_verify.browser.mjs`](verify/er1_verify.browser.mjs) | JavaScript (browser, WebCrypto) | ✅ conformant | `crypto.subtle` only — no Node built-ins, no deps, zero network; test page at [`verify/index.html`](verify/index.html), engine matrix in [`tests/BROWSER_MATRIX.md`](tests/BROWSER_MATRIX.md). |
 
-Both are deliberately small (~200 lines) so a third is an afternoon, not a project. They agree with
+All are deliberately small (~200 lines each) so another is an afternoon, not a project. They agree with
 each other — which proves the format is reproducible across *languages*, but not yet across
 *parties*. That last step is the one we can't take ourselves.
 
