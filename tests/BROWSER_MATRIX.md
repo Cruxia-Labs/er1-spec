@@ -20,8 +20,8 @@ the last local run and what is pending.
 | Engine   | Version            | Result | Notes |
 |----------|--------------------|--------|-------|
 | Chromium | 147.0.7727.15      | PASS   | 8 cases VERIFIED, 8 tamper cases FAILED as required (16/16) |
-| Firefox  | —                  | PENDING | browser build not downloaded on this machine |
-| WebKit   | —                  | PENDING | browser build not downloaded on this machine |
+| Firefox  | 148.0.2            | PASS   | 8 cases VERIFIED, 8 tamper cases FAILED as required (16/16) |
+| WebKit   | 26.4               | PASS   | 8 cases VERIFIED, 8 tamper cases FAILED as required (16/16) |
 
 WebCrypto Ed25519 note: the module feature-detects Ed25519 (RFC 8032 test-vector probe key) and
 throws the typed `Er1UnsupportedCryptoError("browser lacks WebCrypto Ed25519 …")` on engines
@@ -29,7 +29,9 @@ without it, rather than reporting a misleading FAILED. Chromium ships Ed25519 by
 137; current Firefox and Safari/WebKit also ship it — the pending rows are about the *builds not
 being downloaded here*, not about expected support.
 
-## To complete the matrix later
+All three engines PASS as of 2026-07-13 (builds downloaded same day; orchestrator decision — free, local, standard tooling).
+
+## To re-run the matrix
 
 ```sh
 # one-time browser download (heavyweight — needs an explicit deps decision):
