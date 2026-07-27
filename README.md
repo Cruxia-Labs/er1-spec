@@ -35,6 +35,7 @@ in the vectors is test-only — never sign a production receipt with it.)
 | [`SCOPE_OF_CERTIFICATION.md`](SCOPE_OF_CERTIFICATION.md) | Plain-English statement of exactly what a receipt does and does **not** certify, and the breach definition. |
 | [`test_conformance.py`](test_conformance.py) · [`test_cross_language.py`](test_cross_language.py) | The Python verifier accepts every golden receipt and catches tampering; the JS verifier computes byte-identical hashes and the same verdicts. |
 | [`IMPLEMENTATIONS.md`](IMPLEMENTATIONS.md) | The conformance roster — the two reference verifiers, and an open invitation to add an independent one in your language. |
+| [`KEYS.md`](KEYS.md) | Announced signing keys and key tiers. A key adds continuity, never the integrity claim — that stays recomputation. |
 
 ## The constraint set
 
