@@ -18,9 +18,10 @@ VERIFIED ✓  golden_vectors.json:coherent_allow          verdict=ALLOW (recompu
 … all 6 receipts VERIFIED ✓
 ```
 
-Tamper a single byte and it says `FAILED ✗`. The same vectors verify identically in JavaScript with no
-dependencies — `node er1_verify.mjs golden_vectors.json` — showing the format is reproducible across languages, not one tool's
-output. (`pip install -e .` adds an `er1-verify` command for checking your own receipts; the Ed25519 key pinned
+Tamper a single byte and it says `FAILED ✗`. The same vectors verify identically in JavaScript (`node er1_verify.mjs golden_vectors.json`, no
+dependencies) and in the browser with the network off (`verify/er1_verify.browser.mjs`, WebCrypto
+only) — three implementations on disjoint stacks, showing the format is reproducible, not one
+tool's output. (`pip install -e .` adds an `er1-verify` command for checking your own receipts; the Ed25519 key pinned
 in the vectors is test-only — never sign a production receipt with it.)
 
 ## What's in this repo
@@ -29,12 +30,12 @@ in the vectors is test-only — never sign a production receipt with it.)
 |---|---|
 | [`er1.schema.json`](er1.schema.json) | The receipt wire format (JSON Schema 2020-12). |
 | [`er1_verify.py`](er1_verify.py) | The **reference verifier** — one self-contained file, stdlib + `cryptography`, zero project imports. |
-| [`er1_verify.mjs`](er1_verify.mjs) | A **second, independent verifier** in JavaScript — `node:crypto` only, no npm install. Proves the format is reproducible across languages, not tied to one implementation. |
+| [`er1_verify.mjs`](er1_verify.mjs) | A **second verifier** in JavaScript — `node:crypto` only, no npm install. A third runs in the browser: [`verify/er1_verify.browser.mjs`](verify/er1_verify.browser.mjs) (WebCrypto only). |
 | [`golden_vectors.json`](golden_vectors.json) | Frozen cross-language conformance vectors (a fixed key + 6 fully-signed receipts). |
 | [`CONFORMANCE.md`](CONFORMANCE.md) | How any implementation (Rust/WASM/Go/TS) proves itself conformant. |
 | [`SCOPE_OF_CERTIFICATION.md`](SCOPE_OF_CERTIFICATION.md) | Plain-English statement of exactly what a receipt does and does **not** certify, and the breach definition. |
 | [`test_conformance.py`](test_conformance.py) · [`test_cross_language.py`](test_cross_language.py) | The Python verifier accepts every golden receipt and catches tampering; the JS verifier computes byte-identical hashes and the same verdicts. |
-| [`IMPLEMENTATIONS.md`](IMPLEMENTATIONS.md) | The conformance roster — the two reference verifiers, and an open invitation to add an independent one in your language. |
+| [`IMPLEMENTATIONS.md`](IMPLEMENTATIONS.md) | The conformance roster — three verifiers on disjoint stacks (Python, Node, browser WebCrypto), and an open invitation to add an independent one in your language. |
 | [`KEYS.md`](KEYS.md) | Announced signing keys and key tiers. A key adds continuity, never the integrity claim — that stays recomputation. |
 
 ## The constraint set
