@@ -69,9 +69,10 @@ nfc_env = unicodedata.normalize("NFC", "café")
 case("nfd_entity_evasion",
      receipt(action={"tool": "deploy", "asserts": {nfd_env: "prod"}, "resource": "k8s://prod"},
              beliefs=[belief(entity=nfc_env)]),
-     False, "verdict",
+     False, "printable ASCII",
      "A banned entity spelled in NFD evaded the predicate while canonicalizing to byte-identical "
-     "signed input — the signed bytes did not determine the verdict.")
+     "signed input — the signed bytes did not determine the verdict. Now refused earlier: "
+     "identity names are ASCII, so no two spellings of one name exist.")
 
 # ── 3. version constraints must not be satisfied by non-versions ──
 for bad in ["latest", "main", "v3.0", ""]:
@@ -163,7 +164,34 @@ case("duplicate_key_after_nfc",
      False, "malformed",
      "Two assert keys identical after NFC are ambiguous; canonical JSON would emit a duplicate.")
 
-# ── 11. the positive control: a well-formed receipt must still recompute ──
+# ── 11. cross-language primitive divergence (the 2026-08-04 re-gate) ──
+# Every case below is a place where Python and JavaScript builtins disagreed, so the same
+# signed bytes produced different verdicts in two conformant verifiers.
+case("identity_entity_non_ascii", receipt(beliefs=[belief(entity="caf\u00e9")]),
+     False, "printable ASCII",
+     "NFC is bound to the runtime's Unicode version (CPython 15.0 vs Node 16.0; 20 code points "
+     "compose in one and not the other), so a decomposed spelling evaded the gate in one "
+     "implementation and not the other. Identity names are ASCII.")
+case("identity_assert_key_non_ascii",
+     receipt(action={"tool": "deploy", "asserts": {"caf\u00e9": "prod"},
+                     "resource": "k8s://prod"}),
+     False, "printable ASCII", "Same class, on the assert side.")
+case("status_explicit_null", receipt(beliefs=[belief(status=None)]), False, "malformed",
+     "Python's dict.get(k, 'active') and JavaScript's `?? 'active'` disagree on an explicit "
+     "null: one read the constraint as active, the other rejected the receipt.")
+case("version_leading_whitespace",
+     receipt(action={"tool": "pip", "asserts": {"dep:x": "\u180e1.0"}, "resource": "req.txt"},
+             action_binding={"tool": "pip", "args_hash": SHA0, "resource": "req.txt"},
+             beliefs=[belief(entity="dep:x", rule="satisfies", value="<2.0")]),
+     False, "malformed",
+     "Python's str.strip and ECMAScript's String.trim remove different whitespace sets, "
+     "flipping ALLOW/HALT on the same bytes.")
+case("base64_padded_junk",
+     receipt(signature={"algorithm": "ed25519", "public_key": "AAAA=", "signature": "AAAA=="}),
+     False, "signature",
+     "Node, CPython and WebCrypto accepted three different sets of malformed base64.")
+
+# ── 12. the positive control: a well-formed receipt must still recompute ──
 case("well_formed_halt_recomputes",
      receipt(beliefs=[belief()],
              decision={"verdict": "HALT", "reason_code": "BANNED_ENTITY",

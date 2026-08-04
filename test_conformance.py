@@ -63,20 +63,40 @@ def test_tilde_equals_is_compatible_release():
     assert ER1.verify(doc("3.0"))["recomputed_verdict"] == "HALT"    # 3.0 does not
 
 
-def test_keys_are_nfc_normalized_before_ordering():
-    # An independent port that normalizes-then-sorts (the natural reading of
-    # CONFORMANCE.md) must land on our exact bytes. Sorting raw and normalizing
-    # at emit time mis-orders keys whose normalized form sorts differently.
-    composed = "éclair"            # é
-    decomposed = "éclair"         # e + combining acute
-    assert ER1.canonical_json({composed: 1}) == ER1.canonical_json({decomposed: 1})
-    # …and two keys that collide under NFC are ambiguous, never silently duplicated
-    try:
-        ER1.canonical_json({composed: 1, decomposed: 2})
-    except ValueError as exc:
-        assert "NFC" in str(exc)
-    else:
-        raise AssertionError("colliding keys must raise, not emit a duplicate")
+def test_canonical_json_does_not_normalize():
+    # The canonical form deliberately does NOT normalize: NFC is bound to the runtime's Unicode
+    # version (CPython 3.12 ships 15.0, Node 24 ships 16.0, and 20 code points compose in one
+    # and not the other), so normalizing made the signed bytes depend on the interpreter.
+    # RFC 8785 does not normalize either. Two spellings are two strings, with two hashes.
+    composed = "\u00e9clair"
+    decomposed = "e\u0301clair"
+    assert ER1.canonical_json({composed: 1}) != ER1.canonical_json({decomposed: 1})
+
+
+def test_identity_fields_are_ascii_only():
+    # Identity is the one place where "two spellings of one name" is a gate bypass, so the
+    # names used to look a constraint up are restricted to printable ASCII. Free text (values,
+    # tool, resource) is unrestricted and compared with exact code-point equality.
+    r = copy.deepcopy(GOLDEN["receipts"][0]["receipt"])
+    r["beliefs"][0]["entity"] = "caf\u00e9"
+    res = ER1.verify(r)
+    assert res["ok"] is False and any("printable ASCII" in e for e in res["errors"])
+
+    r2 = copy.deepcopy(GOLDEN["receipts"][0]["receipt"])
+    r2["action"]["asserts"] = {"caf\u00e9": "x"}
+    res2 = ER1.verify(r2)
+    assert res2["ok"] is False and any("printable ASCII" in e for e in res2["errors"])
+
+
+def test_document_text_must_have_one_reading():
+    import pytest
+    # Duplicate keys let contradictory decoy content ride inside a signed file that verified.
+    with pytest.raises(ValueError):
+        ER1.load_document('{"a": 1, "a": 2}')
+    with pytest.raises(ValueError):
+        ER1.load_document("[]")                        # top level must be an object
+    with pytest.raises(ValueError):
+        ER1.load_document('{"a": "\\ud800"}')          # unpaired surrogate has no UTF-8 form
 
 
 def test_adversarial_input_fails_and_never_crashes():

@@ -87,14 +87,26 @@ def _utf16_key(s: str):
     return tuple(out)
 
 
-def nfc(s: str) -> str:
-    """The identity function for strings. Every comparison of a name — entity, assert key —
-    goes through this, because canonical JSON normalizes those strings before signing them."""
-    return unicodedata.normalize("NFC", s)
+# Printable ASCII, the character set the IDENTITY fields are restricted to — the names used to
+# look a constraint up: belief.entity, the keys of action.asserts, belief_id. Within it,
+# normalization is the identity function in every Unicode version, so two implementations
+# cannot disagree about which constraint an action touches, whatever their runtimes ship.
+# Free text (values, tool, resource) stays unrestricted: it is compared with exact code-point
+# equality, which is well defined everywhere.
+ID_CHARS = frozenset(chr(c) for c in range(0x20, 0x7F))
+
+
+def _is_id_safe(s: str) -> bool:
+    return all(ch in ID_CHARS for ch in s)
 
 
 def _escape(s: str) -> str:
-    s = nfc(s)
+    # Deliberately NOT normalized. NFC is bound to the runtime's Unicode version (CPython 3.12
+    # ships 15.0, Node 24 ships 16.0, and 20 code points compose in one and not the other), so
+    # normalizing here made the canonical bytes — and therefore the signature — depend on which
+    # interpreter you ran. RFC 8785 does not normalize either; this is now the standard
+    # behaviour, and identity is kept unambiguous by restricting decision-bearing fields to
+    # ASCII instead.
     out = ['"']
     for ch in s:
         cp = ord(ch)
@@ -161,16 +173,11 @@ def _canon(v: Any, depth: int = 0) -> str:
     if isinstance(v, dict):
         # NFC BEFORE ordering: the canonical form is defined over normalized strings, so an
         # independent port that normalizes-then-sorts must land on our exact bytes.
-        norm = {}
         for k in v.keys():
             if not isinstance(k, str):
                 raise Er1MalformedReceipt("object key is not a string")
-            nk = nfc(k)
-            if nk in norm:
-                raise Er1MalformedReceipt(f"duplicate object key after NFC normalization: {nk}")
-            norm[nk] = v[k]
-        keys = sorted(norm.keys(), key=_utf16_key)
-        return "{" + ",".join(_escape(k) + ":" + _canon(norm[k], depth + 1) for k in keys) + "}"
+        keys = sorted(v.keys(), key=_utf16_key)
+        return "{" + ",".join(_escape(k) + ":" + _canon(v[k], depth + 1) for k in keys) + "}"
     if isinstance(v, (list, tuple)):
         return "[" + ",".join(_canon(x, depth + 1) for x in v) + "]"
     raise Er1MalformedReceipt(f"cannot canonicalize {type(v)}")
@@ -218,10 +225,15 @@ def _q(v: Any) -> str:
         return str(v)
 
 
-def _require_str(obj: dict, field: str, where: str) -> str:
+def _require_str(obj: dict, field: str, where: str, id_safe: bool = False) -> str:
     v = obj.get(field)
     if not isinstance(v, str):
         raise Er1MalformedReceipt(f"{where}.{field} must be a string, got {_jt(v)}")
+    if id_safe and not _is_id_safe(v):
+        # Decision-bearing fields are restricted to printable ASCII so that identity cannot
+        # depend on a runtime's Unicode version, whitespace set, or case rules.
+        raise Er1MalformedReceipt(
+            f"{where}.{field} must be printable ASCII (it names a constraint)")
     return v
 
 
@@ -251,6 +263,9 @@ def validate_receipt(receipt: Any) -> None:
         # Strings only. Coercing other types would reintroduce a divergence: Python's
         # str(True) is "True" and ECMAScript's String(true) is "true", so the two verifiers
         # would compare different proposed values against the same constraint.
+        if not _is_id_safe(k):
+            raise Er1MalformedReceipt(
+                f"action.asserts key {_q(k)} must be printable ASCII (it names a constraint)")
         if not isinstance(val, str):
             raise Er1MalformedReceipt(
                 f"action.asserts[{_q(k)}] must be a string, got {_jt(val)}")
@@ -265,7 +280,10 @@ def validate_receipt(receipt: Any) -> None:
     for i, b in enumerate(beliefs):
         if not isinstance(b, dict):
             raise Er1MalformedReceipt(f"beliefs[{i}] is not an object")
-        status = b.get("status", "active")
+        # No implicit default: `.get(k, "active")` and JavaScript's `?? "active"` disagree on
+        # an explicit null, so one verifier read the constraint as active and the other
+        # rejected the receipt. The field must be present and explicit.
+        status = b.get("status")
         if status not in STATUSES:
             raise Er1MalformedReceipt(
                 f"beliefs[{i}].status {_q(status)} is not a known status")
@@ -279,9 +297,9 @@ def validate_receipt(receipt: Any) -> None:
         # Only constraints that can gate must be fully specified; a superseded or
         # nl_extracted entry is inert either way, but its shape must still be sane.
         if status == "active" and source_kind == "deterministic":
-            _require_str(b, "belief_id", f"beliefs[{i}]")
-            _require_str(b, "entity", f"beliefs[{i}]")
-            rule = _require_str(b, "rule", f"beliefs[{i}]")
+            _require_str(b, "belief_id", f"beliefs[{i}]", id_safe=True)
+            _require_str(b, "entity", f"beliefs[{i}]", id_safe=True)
+            rule = _require_str(b, "rule", f"beliefs[{i}]", id_safe=True)
             if rule not in RULES:
                 raise Er1MalformedReceipt(
                     f"beliefs[{i}].rule {_q(rule)} is not a known rule")
@@ -309,14 +327,19 @@ def _parse_ver(s):
 
     The old parser mapped any non-numeric component to 0, so `<2.0` was satisfied by
     "latest", "main", "v3.0" and "" — every one of them a gate bypass."""
-    text = str(s).strip()
+    # No strip(): Python's str.strip and ECMAScript's String.trim remove different whitespace
+    # sets, which flipped verdicts between the two reference verifiers on the same bytes.
+    text = s if isinstance(s, str) else str(s)
     if not text:
         return None
     out = []
     for part in text.split("."):
         if not part or not all("0" <= ch <= "9" for ch in part):   # ASCII digits only
             return None
-        out.append(int(part))
+        val = int(part)
+        if val > MAX_SAFE_INT:      # stay inside the range both languages compare exactly
+            return None
+        out.append(val)
     return tuple(out)
 
 
@@ -341,7 +364,7 @@ def _compatible(proposed, constraint):
 
 
 def _satisfies(proposed_raw, constraint_raw):
-    c = str(constraint_raw).strip()
+    c = constraint_raw if isinstance(constraint_raw, str) else str(constraint_raw)
     for op in (">=", "<=", "==", "~=", ">", "<", "="):
         if c.startswith(op):
             target = _parse_ver(c[len(op):])
@@ -369,16 +392,11 @@ def _conflict(beliefs, asserts):
     fully specified with known enum values."""
     # Identity is normalized on both sides — canonical JSON normalizes these strings before
     # they are signed, so comparing raw would let one signed byte-string carry two identities.
-    norm_asserts = {}
-    for k, v in asserts.items():
-        nk = nfc(k)
-        if nk in norm_asserts:
-            raise Er1MalformedReceipt(f"action.asserts has two keys that are the same after NFC: {nk}")
-        norm_asserts[nk] = v
+    norm_asserts = dict(asserts)
     for b in beliefs:
-        if b.get("status", "active") != "active" or b.get("source_kind") != "deterministic":
+        if b["status"] != "active" or b["source_kind"] != "deterministic":
             continue
-        ent, rule = nfc(b["entity"]), b["rule"]
+        ent, rule = b["entity"], b["rule"]
         if rule == "excludes":
             if ent in norm_asserts:
                 return b["belief_id"], "BANNED_ENTITY"
@@ -408,10 +426,25 @@ _SMALL_ORDER = {
 }
 
 
-def _b64d(s):
+_B64_ALPHABET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+
+
+def _b64d(s, expect_len: int):
+    """Strict, hand-rolled base64url. Every runtime's decoder has its own leniency — Node,
+    CPython and WebCrypto accepted three different sets of malformed inputs, so the same file
+    verified in one implementation and failed in another. Nothing here is delegated."""
     if not isinstance(s, str):
         raise Er1MalformedReceipt("signature field is not a string")
-    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+    if any(ch not in _B64_ALPHABET for ch in s):
+        raise Er1MalformedReceipt("signature field is not unpadded base64url")
+    expect_chars = (expect_len * 8 + 5) // 6
+    if len(s) != expect_chars:
+        raise Er1MalformedReceipt(
+            f"signature field must be exactly {expect_chars} base64url characters")
+    raw = base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+    if len(raw) != expect_len:
+        raise Er1MalformedReceipt(f"signature field must decode to {expect_len} bytes")
+    return raw
 
 
 def verify_signature(receipt: dict) -> bool:
@@ -423,8 +456,8 @@ def verify_signature(receipt: dict) -> bool:
     if not isinstance(sb, dict) or sb.get("algorithm") != "ed25519":
         return False
     try:
-        pub_raw = _b64d(sb["public_key"])
-        sig_raw = _b64d(sb["signature"])
+        pub_raw = _b64d(sb["public_key"], 32)
+        sig_raw = _b64d(sb["signature"], 64)
         if pub_raw in _SMALL_ORDER or sig_raw[:32] in _SMALL_ORDER:
             return False                      # a signature nobody produced must not verify
         # The signed message is the SHA-256 digest of the canonical body (not the raw body).
@@ -557,6 +590,44 @@ def _receipts_from(doc: Any, label: str) -> list:
     return [(label, doc)]
 
 
+def _no_duplicate_keys(pairs):
+    """JSON parsers silently keep the last of a duplicated key, so 245 bytes of contradictory
+    decoy content could ride inside a signed file that still verified. A document whose text
+    does not have one unambiguous reading is refused."""
+    seen = {}
+    for k, v in pairs:
+        if k in seen:
+            raise Er1MalformedReceipt(f"duplicate object key in the document text: {k!r}")
+        seen[k] = v
+    return seen
+
+
+def _reject_lone_surrogates(v: Any) -> None:
+    """A lone surrogate cannot be encoded as UTF-8, so it has no canonical byte form. Python
+    raised on it and JavaScript happily hashed a replacement character."""
+    if isinstance(v, str):
+        for ch in v:
+            if 0xD800 <= ord(ch) <= 0xDFFF:
+                raise Er1MalformedReceipt("string contains an unpaired surrogate")
+    elif isinstance(v, dict):
+        for k, x in v.items():
+            _reject_lone_surrogates(k)
+            _reject_lone_surrogates(x)
+    elif isinstance(v, (list, tuple)):
+        for x in v:
+            _reject_lone_surrogates(x)
+
+
+def load_document(text: str) -> Any:
+    """The one parse path. Every rule that makes a document's reading unambiguous lives here,
+    so the CLI and any embedder get the same guarantees."""
+    doc = json.loads(text, object_pairs_hook=_no_duplicate_keys)
+    _reject_lone_surrogates(doc)
+    if not isinstance(doc, dict):
+        raise Er1MalformedReceipt(f"top-level JSON must be an object, got {_jt(doc)}")
+    return doc
+
+
 USAGE = ("usage: er1-verify [--pubkey KEY]... <receipt.json | golden_vectors.json> [...]\n"
          "  --pubkey KEY   pin a trusted signer (repeatable). Without it, a receipt is\n"
          "                 verified against the key it carries — see SCOPE_OF_CERTIFICATION.md.")
@@ -590,10 +661,13 @@ def main(argv=None) -> int:
     try:
         for path in paths:
             try:
-                # utf-8-sig: tolerate a BOM some producers add inadvertently.
+                # utf-8-sig: tolerate a BOM some producers add inadvertently. Invalid UTF-8 is
+                # a load failure, not something to paper over — the two JS verifiers hashed a
+                # replacement character and reported VERIFIED on bytes Python could not read.
                 with open(path, encoding="utf-8-sig") as f:
-                    doc = json.load(f)
-            except (OSError, json.JSONDecodeError, ValueError, RecursionError) as exc:
+                    doc = load_document(f.read())
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError,
+                    RecursionError) as exc:
                 print(f"FAILED ✗  {path}  [could not load: {exc}]")
                 all_ok = False
                 continue

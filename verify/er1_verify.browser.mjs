@@ -61,11 +61,12 @@ const MAX_DEPTH = 100;
 export class Er1MalformedReceipt extends Error {}
 
 const isPlainObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
-const nfc = (s) => s.normalize("NFC");
 
 // ── canonical JSON — vendored verbatim from the spec ──
+// Deliberately NOT normalized — NFC is bound to the runtime's Unicode version (CPython 3.12
+// ships 15.0, Node 24 ships 16.0; 20 code points compose in one and not the other), so
+// normalizing made the signed bytes depend on the interpreter. RFC 8785 does not normalize.
 function escapeString(s) {
-  s = nfc(s);
   let out = '"';
   for (const ch of s) {
     const cp = ch.codePointAt(0);
@@ -112,18 +113,8 @@ function canon(v, depth = 0) {
   if (typeof v === "string") return escapeString(v);
   if (Array.isArray(v)) return "[" + v.map((x) => canon(x, depth + 1)).join(",") + "]";
   if (typeof v === "object") {
-    // NFC BEFORE ordering — see the note in er1_verify.py::_canon. Sorting raw
-    // keys and normalizing at emit time can mis-order and can emit duplicates.
-    const norm = new Map();
-    for (const k of Object.keys(v)) {
-      const nk = k.normalize("NFC");
-      if (norm.has(nk)) {
-        throw new Er1MalformedReceipt("duplicate object key after NFC normalization: " + nk);
-      }
-      norm.set(nk, v[k]);
-    }
-    const keys = [...norm.keys()].sort(); // default UTF-16 code-unit order == python _utf16_key
-    return "{" + keys.map((k) => escapeString(k) + ":" + canon(norm.get(k), depth + 1)).join(",") + "}";
+    const keys = Object.keys(v).sort(); // default UTF-16 code-unit order == python _utf16_key
+    return "{" + keys.map((k) => escapeString(k) + ":" + canon(v[k], depth + 1)).join(",") + "}";
   }
   throw new Er1MalformedReceipt("cannot canonicalize " + typeof v);
 }
@@ -139,12 +130,31 @@ async function sha256Hex(bytes) {
 
 // base64url → bytes without runtime-specific helpers. atob is strict: malformed input throws,
 // which the signature check treats as an invalid signature — same verdict as the references.
-function b64urlToBytes(s) {
-  let b64 = String(s).replace(/=+$/, "").replace(/-/g, "+").replace(/_/g, "/");
+// Strict, hand-rolled base64url. Every runtime's decoder has its own leniency — Node, CPython
+// and WebCrypto accepted three different sets of malformed inputs, so the same file verified in
+// one implementation and failed in another. Nothing here is delegated.
+const B64_ALPHABET = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_");
+
+function b64urlToBytes(s, expectLen) {
+  if (typeof s !== "string") throw new Er1MalformedReceipt("signature field is not a string");
+  for (const ch of s) {
+    if (!B64_ALPHABET.has(ch)) {
+      throw new Er1MalformedReceipt("signature field is not unpadded base64url");
+    }
+  }
+  const expectChars = Math.ceil((expectLen * 8) / 6);
+  if (s.length !== expectChars) {
+    throw new Er1MalformedReceipt(
+      `signature field must be exactly ${expectChars} base64url characters`);
+  }
+  let b64 = s.replace(/-/g, "+").replace(/_/g, "/");
   while (b64.length % 4 !== 0) b64 += "=";
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  if (out.length !== expectLen) {
+    throw new Er1MalformedReceipt(`signature field must decode to ${expectLen} bytes`);
+  }
   return out;
 }
 
@@ -155,11 +165,25 @@ const STATUSES = new Set(["active", "superseded"]);
 const SOURCE_KINDS = new Set(["deterministic", "nl_extracted"]);
 const BELIEF_CLASSES = new Set(["CERTIFIED", "BEST_EFFORT"]);
 
-function requireStr(obj, field, where) {
+// Printable ASCII, the character set the IDENTITY fields are restricted to — the names used to
+// look a constraint up. Within it, normalization is the identity function in every Unicode
+// version, so two implementations cannot disagree about which constraint an action touches.
+const isIdSafe = (s) => {
+  for (const ch of s) {
+    const c = ch.codePointAt(0);
+    if (c < 0x20 || c > 0x7e) return false;
+  }
+  return true;
+};
+
+function requireStr(obj, field, where, idSafe = false) {
   const v = obj[field];
   if (typeof v !== "string") {
     throw new Er1MalformedReceipt(
       `${where}.${field} must be a string, got ${v === null ? "null" : typeof v}`);
+  }
+  if (idSafe && !isIdSafe(v)) {
+    throw new Er1MalformedReceipt(`${where}.${field} must be printable ASCII (it names a constraint)`);
   }
   return v;
 }
@@ -176,6 +200,10 @@ export function validateReceipt(r) {
   requireStr(a, "resource", "action");
   if (!isPlainObject(a.asserts)) throw new Er1MalformedReceipt("action.asserts must be an object");
   for (const [k, val] of Object.entries(a.asserts)) {
+    if (!isIdSafe(k)) {
+      throw new Er1MalformedReceipt(
+        `action.asserts key ${JSON.stringify(k)} must be printable ASCII (it names a constraint)`);
+    }
     if (typeof val !== "string") {
       throw new Er1MalformedReceipt(
         `action.asserts[${JSON.stringify(k)}] must be a string, got ${val === null ? "null" : typeof val}`);
@@ -187,7 +215,9 @@ export function validateReceipt(r) {
   if (!Array.isArray(r.beliefs)) throw new Er1MalformedReceipt("beliefs must be an array");
   r.beliefs.forEach((b, i) => {
     if (!isPlainObject(b)) throw new Er1MalformedReceipt(`beliefs[${i}] is not an object`);
-    const status = b.status ?? "active";
+    // No implicit default: `?? "active"` and Python's dict.get disagree on an explicit null,
+    // so one verifier read the constraint as active and the other rejected the receipt.
+    const status = b.status;
     if (!STATUSES.has(status)) {
       throw new Er1MalformedReceipt(`beliefs[${i}].status ${JSON.stringify(status)} is not a known status`);
     }
@@ -200,9 +230,9 @@ export function validateReceipt(r) {
         `beliefs[${i}].belief_class ${JSON.stringify(b.belief_class)} is not a known belief_class`);
     }
     if (status === "active" && b.source_kind === "deterministic") {
-      requireStr(b, "belief_id", `beliefs[${i}]`);
-      requireStr(b, "entity", `beliefs[${i}]`);
-      const rule = requireStr(b, "rule", `beliefs[${i}]`);
+      requireStr(b, "belief_id", `beliefs[${i}]`, true);
+      requireStr(b, "entity", `beliefs[${i}]`, true);
+      const rule = requireStr(b, "rule", `beliefs[${i}]`, true);
       if (!RULES.has(rule)) {
         throw new Er1MalformedReceipt(`beliefs[${i}].rule ${JSON.stringify(rule)} is not a known rule`);
       }
@@ -222,7 +252,9 @@ export function validateReceipt(r) {
 // ── the conflict predicate — vendored verbatim from the spec ──
 // Strict dotted-numeric parse; null when the string is not a version.
 function parseVer(s) {
-  const text = String(s).trim();
+  // No trim(): ECMAScript's String.trim and Python's str.strip remove different whitespace
+  // sets, which flipped verdicts between the two reference verifiers on the same bytes.
+  const text = typeof s === "string" ? s : String(s);
   if (!text) return null;
   const out = [];
   for (const part of text.split(".")) {
@@ -248,7 +280,7 @@ function compatible(proposed, constraint) {
   return true;
 }
 function satisfies(proposedRaw, constraintRaw) {
-  const c = String(constraintRaw).trim();
+  const c = typeof constraintRaw === "string" ? constraintRaw : String(constraintRaw);
   for (const op of [">=", "<=", "==", "~=", ">", "<", "="]) {
     if (c.startsWith(op)) {
       const target = parseVer(c.slice(op.length));
@@ -270,17 +302,10 @@ function satisfies(proposedRaw, constraintRaw) {
 function conflict(beliefs, asserts) {
   // Identity is normalized on both sides — canonical JSON normalizes these strings before they
   // are signed, so comparing raw would let one signed byte-string carry two identities.
-  const normAsserts = new Map();
-  for (const [k, v] of Object.entries(asserts)) {
-    const nk = nfc(k);
-    if (normAsserts.has(nk)) {
-      throw new Er1MalformedReceipt(`action.asserts has two keys that are the same after NFC: ${nk}`);
-    }
-    normAsserts.set(nk, v);
-  }
+  const normAsserts = new Map(Object.entries(asserts));
   for (const b of beliefs) {
-    if ((b.status ?? "active") !== "active" || b.source_kind !== "deterministic") continue;
-    const ent = nfc(b.entity), rule = b.rule, val = b.value;
+    if (b.status !== "active" || b.source_kind !== "deterministic") continue;
+    const ent = b.entity, rule = b.rule, val = b.value;
     if (rule === "excludes") {
       if (normAsserts.has(ent)) return [b.belief_id, "BANNED_ENTITY"];
     } else if (normAsserts.has(ent)) {
@@ -316,9 +341,8 @@ async function verifySignature(r) {
   if (!isPlainObject(sb) || sb.algorithm !== "ed25519") return false;
   if (typeof sb.public_key !== "string" || typeof sb.signature !== "string") return false;
   try {
-    const pubRaw = b64urlToBytes(sb.public_key);
-    const sigRaw = b64urlToBytes(sb.signature);
-    if (pubRaw.length !== 32 || sigRaw.length !== 64) return false;
+    const pubRaw = b64urlToBytes(sb.public_key, 32);
+    const sigRaw = b64urlToBytes(sb.signature, 64);
     if (SMALL_ORDER.has(toHex(pubRaw)) || SMALL_ORDER.has(toHex(sigRaw.subarray(0, 32)))) {
       return false;                       // a signature nobody produced must not verify
     }
@@ -332,8 +356,8 @@ async function verifySignature(r) {
     const subtle = globalThis.crypto.subtle;
     const digest = await subtle.digest("SHA-256", canonicalBytes(body(r)));
     const pub = await subtle.importKey(
-      "raw", b64urlToBytes(sb.public_key), { name: "Ed25519" }, false, ["verify"]);
-    return await subtle.verify({ name: "Ed25519" }, pub, b64urlToBytes(sb.signature),
+      "raw", b64urlToBytes(sb.public_key, 32), { name: "Ed25519" }, false, ["verify"]);
+    return await subtle.verify({ name: "Ed25519" }, pub, b64urlToBytes(sb.signature, 64),
                                new Uint8Array(digest));
   } catch {
     return false;
