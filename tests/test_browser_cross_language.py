@@ -105,4 +105,10 @@ def test_fixture_pairs_cover_both_directions():
         bad = ER1.verify(json.loads(tf.read_text()))
         assert not bad["ok"]
         assert not bad["checks"]["signature"]  # tamper-evident
-        assert not bad["checks"]["verdict"]    # recompute catches the lie too
+        # The tamper must ALSO be caught without the signature — either the recomputed verdict
+        # disagrees with the recorded one, or the tampered document no longer satisfies the
+        # structural rules. Both are recomputation catching the lie; asserting only the first
+        # would make a stricter verifier look like a regression.
+        assert bad["checks"].get("verdict") is False or any(
+            e.startswith("malformed receipt:") for e in bad["errors"]
+        ), bad["errors"]

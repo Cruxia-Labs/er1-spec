@@ -7,40 +7,72 @@ receipt's own recorded constraint snapshot, checks the signature, the action bin
 state-root, and prints VERIFIED or FAILED. Tamper a single byte and it fails.
 
     $ pip install cryptography
-    $ er1-verify receipt.json          # (or: python er1_verify.py receipt.json)
+    $ er1-verify receipt.json               # (or: python er1_verify.py receipt.json)
+    $ er1-verify --pubkey <key> receipt.json   # pin the signer you actually trust
 
 An ER1 receipt binds the CONSTRAINT STATE (the active, deterministic constraint set — a
-"context-lineage" snapshot) an agent's action was produced under. This verifier vendors the
-canonical-JSON serializer (RFC 8785) and the conflict predicate verbatim from the spec, so it
-is byte-identical to the producer; any conformant re-implementation (Rust/WASM/TS/Go) must
-reproduce golden_vectors.json (see CONFORMANCE.md).
+"context-lineage" snapshot) an agent's action was produced under.
 
 What it certifies: the verdict correctly follows from the recorded, signed pre-state — NOT the
 empirical truth of the constraints ("garbage in, certified garbage out"). receipt_id /
 created_at are signed metadata, excluded from the verdict recomputation. Full breach
 definition: SCOPE_OF_CERTIFICATION.md.
 
-(Note: the on-wire array of constraints is named `beliefs[]` in the frozen v1 schema for
-signature compatibility; it is the constraint / context-lineage set.)
+SOUNDNESS RULES (v1.1, after the 2026-08-04 adversarial review). Each closes a class of
+attack in which a receipt no one should trust printed VERIFIED:
+
+  FAIL CLOSED. Anything unrecognized — an unknown enum value, a missing field on an active
+  constraint, a wrong JSON type, an unparseable version — makes the receipt UNVERIFIABLE, not
+  permissible. Previously such receipts skipped the constraint and verified as ALLOW, so a
+  single character ("ACTIVE" for "active") silently disarmed a gate.
+
+  IDENTITY IS NORMALIZED. Entity names and assert keys are compared after NFC normalization,
+  because canonical JSON normalizes them too. Otherwise the same bytes could carry two
+  different identities — a banned entity spelled in NFD evaded the predicate while producing
+  byte-identical signed input, which broke the property the whole receipt rests on: that the
+  signed bytes determine the verdict.
+
+  ONE NUMBER GRAMMAR. Canonical JSON accepts only integers that are exactly representable in
+  both IEEE-754 doubles and Python ints (|n| <= 2**53 - 1). Floats and larger integers are
+  rejected rather than serialized, because no number grammar exists that Python and
+  ECMAScript both emit identically — 1e21, 1e16, 1e-6 and every integer above 2**53 differed,
+  which let a tampered body keep a colliding hash in one language and not the other.
+
+  A RECEIPT IS NOT A BUNDLE. A document that looks like both is ambiguous and is rejected.
+  Previously an unsigned top-level `receipts` array decided what got verified, so a forged
+  receipt carrying one genuine receipt printed VERIFIED and exited 0 — pinning did not help.
+
+  DEGENERATE KEYS ARE REJECTED. Small-order Ed25519 points make one constant signature block
+  verify against any message, so a signature nobody produced would verify.
 """
 from __future__ import annotations
 
 import base64
-import hashlib
 import binascii
+import hashlib
 import json
-import math
 import sys
 import unicodedata
 from typing import Any, Optional
 
+# ── limits ──
+# Both bounds exist so adversarial input yields a verdict instead of a traceback.
+MAX_DEPTH = 100                      # nesting; Python's recursion limit is not a security control
+MAX_SAFE_INT = 2 ** 53 - 1           # the exactly-representable range shared with ECMAScript
+
+
+class Er1MalformedReceipt(ValueError):
+    """The receipt cannot be evaluated. Never silently ALLOW — the caller turns this into
+    FAILED, the only safe verdict for input we are unable to check."""
+
+
 # ── canonical JSON — vendored verbatim from the spec ──
 #
-# RFC 8785-INSPIRED, with two PINNED deviations you must match to interoperate
-# (both documented in CONFORMANCE.md): every non-ASCII character is escaped as
-# \uXXXX rather than emitted literally, and all strings — including object keys,
-# which are normalized BEFORE they are ordered — are NFC-normalized. A port that
-# follows RFC 8785 literally will not reproduce our hashes.
+# RFC 8785-INSPIRED, with three PINNED deviations you must match to interoperate (all
+# documented in CONFORMANCE.md): every non-ASCII character is escaped as \\uXXXX rather than
+# emitted literally; all strings — including object keys, which are normalized BEFORE they are
+# ordered — are NFC-normalized; and the number grammar is restricted to exactly-representable
+# integers. A port that follows RFC 8785 literally will not reproduce our hashes.
 
 def _utf16_key(s: str):
     out = []
@@ -55,8 +87,14 @@ def _utf16_key(s: str):
     return tuple(out)
 
 
+def nfc(s: str) -> str:
+    """The identity function for strings. Every comparison of a name — entity, assert key —
+    goes through this, because canonical JSON normalizes those strings before signing them."""
+    return unicodedata.normalize("NFC", s)
+
+
 def _escape(s: str) -> str:
-    s = unicodedata.normalize("NFC", s)
+    s = nfc(s)
     out = ['"']
     for ch in s:
         cp = ord(ch)
@@ -88,30 +126,30 @@ def _escape(s: str) -> str:
 
 
 def _number(n) -> str:
+    """Integers only, and only those both languages represent exactly.
+
+    Anything else is refused rather than guessed at. The alternative — emitting a float in a
+    per-language format — means two conformant verifiers can disagree on the canonical bytes
+    of the same document, and a disagreement about bytes is a disagreement about whether a
+    receipt was tampered with."""
     if isinstance(n, bool):
         return "true" if n else "false"
     if isinstance(n, int):
+        if abs(n) > MAX_SAFE_INT:
+            raise Er1MalformedReceipt(
+                f"integer {n} is outside the exactly-representable range (|n| <= 2**53-1)")
         return str(n)
-    if math.isnan(n) or math.isinf(n):
-        raise ValueError("non-finite number")
-    if n == 0.0:
-        return "0"
-    if float(n).is_integer() and abs(n) < 1e16:
-        return str(int(n))
-    s = repr(n)
-    if "e" in s or "E" in s:
-        mant, _, exp = s.partition("e") if "e" in s else s.partition("E")
-        sign = ""
-        if exp.startswith("+"):
-            exp = exp[1:]
-        if exp.startswith("-"):
-            sign, exp = "-", exp[1:]
-        exp = exp.lstrip("0") or "0"
-        s = f"{mant}e{sign}{exp}"
-    return s
+    if isinstance(n, float):
+        if n.is_integer() and abs(n) <= MAX_SAFE_INT:
+            return str(int(n))
+        raise Er1MalformedReceipt(
+            f"non-integral number {n} is not canonicalizable (integers only)")
+    raise Er1MalformedReceipt(f"cannot canonicalize number of type {type(n)}")
 
 
-def _canon(v: Any) -> str:
+def _canon(v: Any, depth: int = 0) -> str:
+    if depth > MAX_DEPTH:
+        raise Er1MalformedReceipt(f"nesting deeper than {MAX_DEPTH} levels")
     if v is None:
         return "null"
     if isinstance(v, bool):
@@ -121,22 +159,21 @@ def _canon(v: Any) -> str:
     if isinstance(v, str):
         return _escape(v)
     if isinstance(v, dict):
-        # NFC BEFORE ordering. The canonical form is defined over normalized
-        # strings, so an independent port that normalizes-then-sorts (the
-        # natural reading of CONFORMANCE.md) must land on our exact bytes.
-        # Sorting raw keys and normalizing at emit time can both mis-order
-        # (é vs é) and silently emit a duplicate key.
+        # NFC BEFORE ordering: the canonical form is defined over normalized strings, so an
+        # independent port that normalizes-then-sorts must land on our exact bytes.
         norm = {}
         for k in v.keys():
-            nk = unicodedata.normalize("NFC", k)
+            if not isinstance(k, str):
+                raise Er1MalformedReceipt("object key is not a string")
+            nk = nfc(k)
             if nk in norm:
-                raise ValueError(f"duplicate object key after NFC normalization: {nk!r}")
+                raise Er1MalformedReceipt(f"duplicate object key after NFC normalization: {nk}")
             norm[nk] = v[k]
         keys = sorted(norm.keys(), key=_utf16_key)
-        return "{" + ",".join(_escape(k) + ":" + _canon(norm[k]) for k in keys) + "}"
+        return "{" + ",".join(_escape(k) + ":" + _canon(norm[k], depth + 1) for k in keys) + "}"
     if isinstance(v, (list, tuple)):
-        return "[" + ",".join(_canon(x) for x in v) + "]"
-    raise TypeError(f"cannot canonicalize {type(v)}")
+        return "[" + ",".join(_canon(x, depth + 1) for x in v) + "]"
+    raise Er1MalformedReceipt(f"cannot canonicalize {type(v)}")
 
 
 def canonical_json(v: Any) -> bytes:
@@ -147,23 +184,144 @@ def _sha256_hex(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+# ── structural validation — runs BEFORE the predicate, and fails closed ──
+
+VERDICTS = {"ALLOW", "HALT"}
+RULES = {"equals", "excludes", "satisfies"}
+STATUSES = {"active", "superseded"}
+SOURCE_KINDS = {"deterministic", "nl_extracted"}
+BELIEF_CLASSES = {"CERTIFIED", "BEST_EFFORT"}
+
+
+def _jt(v: Any) -> str:
+    """JSON type names, not language type names — the error strings are part of the spec and
+    must read identically from every implementation (tests/test_browser_cross_language.py
+    compares them literally)."""
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "boolean"
+    if isinstance(v, (int, float)):
+        return "number"
+    if isinstance(v, str):
+        return "string"
+    if isinstance(v, (list, tuple)):
+        return "array"
+    return "object"
+
+
+def _q(v: Any) -> str:
+    """JSON.stringify-compatible rendering of a value inside an error message."""
+    try:
+        return json.dumps(v, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _require_str(obj: dict, field: str, where: str) -> str:
+    v = obj.get(field)
+    if not isinstance(v, str):
+        raise Er1MalformedReceipt(f"{where}.{field} must be a string, got {_jt(v)}")
+    return v
+
+
+def validate_receipt(receipt: Any) -> None:
+    """Reject anything we cannot evaluate exactly. An unrecognized enum value is a defect in
+    the producer, not a permission — before this existed, `status: "ACTIVE"` disarmed a gate
+    and the receipt verified as ALLOW."""
+    if not isinstance(receipt, dict):
+        raise Er1MalformedReceipt("receipt is not a JSON object")
+
+    # A receipt must not also claim to be a bundle (see the document-discrimination rule).
+    if "receipts" in receipt:
+        raise Er1MalformedReceipt(
+            "document carries both receipt fields and a `receipts` array — ambiguous")
+
+    action = receipt.get("action")
+    if not isinstance(action, dict):
+        raise Er1MalformedReceipt("action must be an object")
+    _require_str(action, "tool", "action")
+    _require_str(action, "resource", "action")
+    asserts = action.get("asserts")
+    if not isinstance(asserts, dict):
+        raise Er1MalformedReceipt("action.asserts must be an object")
+    for k, val in asserts.items():
+        if not isinstance(k, str):
+            raise Er1MalformedReceipt("action.asserts key is not a string")
+        # Strings only. Coercing other types would reintroduce a divergence: Python's
+        # str(True) is "True" and ECMAScript's String(true) is "true", so the two verifiers
+        # would compare different proposed values against the same constraint.
+        if not isinstance(val, str):
+            raise Er1MalformedReceipt(
+                f"action.asserts[{_q(k)}] must be a string, got {_jt(val)}")
+
+    binding = receipt.get("action_binding")
+    if not isinstance(binding, dict):
+        raise Er1MalformedReceipt("action_binding must be an object")
+
+    beliefs = receipt.get("beliefs")
+    if not isinstance(beliefs, list):
+        raise Er1MalformedReceipt("beliefs must be an array")
+    for i, b in enumerate(beliefs):
+        if not isinstance(b, dict):
+            raise Er1MalformedReceipt(f"beliefs[{i}] is not an object")
+        status = b.get("status", "active")
+        if status not in STATUSES:
+            raise Er1MalformedReceipt(
+                f"beliefs[{i}].status {_q(status)} is not a known status")
+        source_kind = b.get("source_kind")
+        if source_kind not in SOURCE_KINDS:
+            raise Er1MalformedReceipt(
+                f"beliefs[{i}].source_kind {_q(source_kind)} is not a known source_kind")
+        if "belief_class" in b and b["belief_class"] not in BELIEF_CLASSES:
+            raise Er1MalformedReceipt(
+                f"beliefs[{i}].belief_class {_q(b['belief_class'])} is not a known belief_class")
+        # Only constraints that can gate must be fully specified; a superseded or
+        # nl_extracted entry is inert either way, but its shape must still be sane.
+        if status == "active" and source_kind == "deterministic":
+            _require_str(b, "belief_id", f"beliefs[{i}]")
+            _require_str(b, "entity", f"beliefs[{i}]")
+            rule = _require_str(b, "rule", f"beliefs[{i}]")
+            if rule not in RULES:
+                raise Er1MalformedReceipt(
+                    f"beliefs[{i}].rule {_q(rule)} is not a known rule")
+            if rule != "excludes":
+                _require_str(b, "value", f"beliefs[{i}]")
+
+    decision = receipt.get("decision")
+    if not isinstance(decision, dict):
+        raise Er1MalformedReceipt("decision must be an object")
+    if decision.get("verdict") not in VERDICTS:
+        raise Er1MalformedReceipt(
+            f"decision.verdict {_q(decision.get('verdict'))} is not one of ALLOW, HALT")
+
+    # The whole body must be canonicalizable, anywhere in the document — not just the parts
+    # this verifier reads. A receipt carrying a number or a nesting depth we cannot serialize
+    # exactly has no well-defined signed form, so it is refused with a reason rather than
+    # reported as a mere signature failure.
+    canonical_json(_body(receipt))
+
+
 # ── the conflict predicate — vendored verbatim from the spec ──
 
 def _parse_ver(s):
+    """Strict dotted-numeric parse. Returns None when the string is not a version.
+
+    The old parser mapped any non-numeric component to 0, so `<2.0` was satisfied by
+    "latest", "main", "v3.0" and "" — every one of them a gate bypass."""
+    text = str(s).strip()
+    if not text:
+        return None
     out = []
-    for part in str(s).strip().split("."):
-        num = ""
-        for ch in part:
-            if "0" <= ch <= "9":          # ASCII digits only — matches er1_verify.mjs (no Unicode digits)
-                num += ch
-            else:
-                break
-        out.append(int(num) if num else 0)
+    for part in text.split("."):
+        if not part or not all("0" <= ch <= "9" for ch in part):   # ASCII digits only
+            return None
+        out.append(int(part))
     return tuple(out)
 
 
 def _ver_cmp(a, b):
-    pa, pb = _parse_ver(a), _parse_ver(b)
+    pa, pb = a, b
     n = max(len(pa), len(pb))
     pa += (0,) * (n - len(pa))
     pb += (0,) * (n - len(pb))
@@ -171,60 +329,62 @@ def _ver_cmp(a, b):
 
 
 def _compatible(proposed, constraint):
-    # PEP 440 compatible-release (~=): proposed >= constraint AND shares its prefix (all but the
-    # constraint's last component must match). ~=2.0 allows 2.5 not 3.0; ~=2.0.1 allows 2.0.5 not 2.1.0.
+    # PEP 440 compatible-release (~=): proposed >= constraint AND shares its prefix (all but
+    # the constraint's last component must match). ~=2.0 allows 2.5 not 3.0.
     if _ver_cmp(proposed, constraint) < 0:
         return False
-    cv = _parse_ver(constraint)
-    if len(cv) < 2:
+    if len(constraint) < 2:
         return True
-    prefix = cv[:-1]
-    pv = _parse_ver(proposed)
-    pv += (0,) * (len(prefix) - len(pv))
+    prefix = constraint[:-1]
+    pv = proposed + (0,) * (len(prefix) - len(proposed))
     return pv[:len(prefix)] == prefix
 
 
-def _satisfies(proposed, constraint):
-    c = constraint.strip()
+def _satisfies(proposed_raw, constraint_raw):
+    c = str(constraint_raw).strip()
     for op in (">=", "<=", "==", "~=", ">", "<", "="):
         if c.startswith(op):
-            target = c[len(op):].strip()
+            target = _parse_ver(c[len(op):])
+            proposed = _parse_ver(proposed_raw)
+            if target is None or proposed is None:
+                raise Er1MalformedReceipt(
+                    f"cannot evaluate {op} between {_q(str(proposed_raw))} and {_q(c)}: not versions")
             if op == "~=":
                 return _compatible(proposed, target)
             cmp = _ver_cmp(proposed, target)
             return {">=": cmp >= 0, ">": cmp > 0, "<=": cmp <= 0, "<": cmp < 0,
                     "==": cmp == 0, "=": cmp == 0}[op]
-    return _ver_cmp(proposed, c) == 0
-
-
-class Er1MalformedReceipt(ValueError):
-    """A receipt is structurally unusable. Never silently ALLOW — the caller
-    turns this into FAILED, which is the only safe verdict for input we cannot
-    evaluate."""
+    # No operator: exact equality of the version, or — when neither side is a version —
+    # exact string equality, which is well defined and language-independent.
+    target, proposed = _parse_ver(c), _parse_ver(proposed_raw)
+    if target is None or proposed is None:
+        return str(proposed_raw) == c
+    return _ver_cmp(proposed, target) == 0
 
 
 def _conflict(beliefs, asserts):
-    """Return (belief_id, reason_code) of the first conflict, or None."""
-    if not isinstance(beliefs, list):
-        raise Er1MalformedReceipt("beliefs is not a list")
-    if not isinstance(asserts, dict):
-        raise Er1MalformedReceipt("action.asserts is not an object")
+    """Return (belief_id, reason_code) of the first conflict, or None.
+
+    Assumes validate_receipt() has already run: every active deterministic constraint here is
+    fully specified with known enum values."""
+    # Identity is normalized on both sides — canonical JSON normalizes these strings before
+    # they are signed, so comparing raw would let one signed byte-string carry two identities.
+    norm_asserts = {}
+    for k, v in asserts.items():
+        nk = nfc(k)
+        if nk in norm_asserts:
+            raise Er1MalformedReceipt(f"action.asserts has two keys that are the same after NFC: {nk}")
+        norm_asserts[nk] = v
     for b in beliefs:
-        if not isinstance(b, dict):
-            raise Er1MalformedReceipt("belief entry is not an object")
         if b.get("status", "active") != "active" or b.get("source_kind") != "deterministic":
             continue
-        try:
-            ent, rule, val = b["entity"], b["rule"], b["value"]
-        except KeyError as exc:
-            # An active deterministic belief missing its predicate fields cannot
-            # be evaluated. Skipping would silently weaken the gate, so fail.
-            raise Er1MalformedReceipt(f"belief missing required field: {exc}") from None
+        ent, rule = nfc(b["entity"]), b["rule"]
         if rule == "excludes":
-            if ent in asserts:
+            if ent in norm_asserts:
                 return b["belief_id"], "BANNED_ENTITY"
-        elif ent in asserts:
-            proposed = str(asserts[ent])
+        elif ent in norm_asserts:
+            proposed = str(norm_asserts[ent])
+            val = b["value"]
             if rule == "equals" and proposed != val:
                 return b["belief_id"], "SUPERSEDED_VALUE"
             if rule == "satisfies" and not _satisfies(proposed, val):
@@ -232,7 +392,52 @@ def _conflict(beliefs, asserts):
     return None
 
 
-# ── verification ──
+# ── signature ──
+
+# Small-order Ed25519 point encodings (libsodium's has_small_order blacklist). A signature
+# built from these verifies against ANY message, so one constant block would forge every
+# receipt. Rejected for both the public key and the signature's R component.
+_SMALL_ORDER = {
+    bytes.fromhex("0000000000000000000000000000000000000000000000000000000000000000"),
+    bytes.fromhex("0100000000000000000000000000000000000000000000000000000000000000"),
+    bytes.fromhex("26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05"),
+    bytes.fromhex("c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a"),
+    bytes.fromhex("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
+    bytes.fromhex("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
+    bytes.fromhex("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
+}
+
+
+def _b64d(s):
+    if not isinstance(s, str):
+        raise Er1MalformedReceipt("signature field is not a string")
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def verify_signature(receipt: dict) -> bool:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    if not isinstance(receipt, dict):
+        return False
+    sb = receipt.get("signature")
+    if not isinstance(sb, dict) or sb.get("algorithm") != "ed25519":
+        return False
+    try:
+        pub_raw = _b64d(sb["public_key"])
+        sig_raw = _b64d(sb["signature"])
+        if pub_raw in _SMALL_ORDER or sig_raw[:32] in _SMALL_ORDER:
+            return False                      # a signature nobody produced must not verify
+        # The signed message is the SHA-256 digest of the canonical body (not the raw body).
+        # The signer and every reference verifier agree on this, and golden_vectors.json pins
+        # it, so it is the conformance contract. Plain Ed25519 over a 32-byte message.
+        digest = hashlib.sha256(canonical_json(_body(receipt))).digest()
+        Ed25519PublicKey.from_public_bytes(pub_raw).verify(sig_raw, digest)
+        return True
+    except (InvalidSignature, KeyError, ValueError, TypeError, binascii.Error):
+        # Adversarial receipts are the expected input: wrong types, bad base64,
+        # non-canonicalizable bodies. Every one of them is FAILED, never a crash.
+        return False
+
 
 def _body(receipt: dict) -> dict:
     b = dict(receipt)
@@ -244,51 +449,33 @@ def receipt_hash(receipt: dict) -> str:
     return _sha256_hex(canonical_json(_body(receipt)))
 
 
-def verify_signature(receipt: dict) -> bool:
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-    from cryptography.exceptions import InvalidSignature
-    sb = receipt.get("signature")
-    if not isinstance(sb, dict) or sb.get("algorithm") != "ed25519":
-        return False
+# ── verification ──
 
-    def _d(s):
-        return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
-
-    try:
-        # The signed message is the SHA-256 digest of the canonical body (not the raw body). The
-        # signer and BOTH reference verifiers agree on this, and golden_vectors.json pins it, so it
-        # is the conformance contract. This is plain Ed25519 over a 32-byte message (NOT Ed25519ph);
-        # a port that instead signs the raw body is simply non-conformant, not "more correct".
-        digest = hashlib.sha256(canonical_json(_body(receipt))).digest()
-        Ed25519PublicKey.from_public_bytes(_d(sb["public_key"])).verify(_d(sb["signature"]), digest)
-        return True
-    except (InvalidSignature, KeyError, ValueError, TypeError, binascii.Error):
-        # Adversarial receipts are the expected input: wrong types, bad base64,
-        # non-canonicalizable bodies. Every one of them is FAILED, never a crash.
-        return False
-
-
-def verify(receipt: dict, trusted_keys: Optional[set] = None) -> dict:
-    """Verify one receipt. `trusted_keys` optionally pins the acceptable signer
-    public keys; without it a receipt still verifies against the key it carries
-    (see SCOPE_OF_CERTIFICATION.md), and the CLI prints that key so the relying
-    party can pin it themselves."""
-    errs = []
-    checks = {}
-
-    if not isinstance(receipt, dict):
-        return {"ok": False, "recomputed_verdict": None, "checks": {},
-                "errors": ["receipt is not a JSON object"], "signer": None}
+def verify(receipt: Any, trusted_keys: Optional[set] = None) -> dict:
+    """Verify one receipt. `trusted_keys` optionally pins the acceptable signer public keys;
+    without it a receipt still verifies against the key it carries (see
+    SCOPE_OF_CERTIFICATION.md), and the CLI prints that key so the relying party can pin it."""
+    errs: list = []
+    checks: dict = {}
 
     signer = None
-    sb = receipt.get("signature")
-    if isinstance(sb, dict):
-        pk = sb.get("public_key")
-        signer = pk if isinstance(pk, str) else None
+    if isinstance(receipt, dict):
+        sb = receipt.get("signature")
+        if isinstance(sb, dict) and isinstance(sb.get("public_key"), str):
+            signer = sb["public_key"]
 
+    # The signature is checked FIRST and unconditionally: it cannot crash (every adversarial
+    # shape returns False) and it is the answer a relying party most wants, so a tampered
+    # receipt reports the tamper even when it is also structurally invalid.
     checks["signature"] = verify_signature(receipt)
     if not checks["signature"]:
         errs.append("signature: invalid or missing")
+
+    try:
+        validate_receipt(receipt)
+    except Er1MalformedReceipt as exc:
+        return {"ok": False, "recomputed_verdict": None, "checks": checks,
+                "errors": errs + [f"malformed receipt: {exc}"], "signer": signer}
 
     if trusted_keys is not None:
         checks["trusted_signer"] = signer in trusted_keys
@@ -296,36 +483,30 @@ def verify(receipt: dict, trusted_keys: Optional[set] = None) -> dict:
             errs.append(f"signer not in pinned key set: {signer!r}")
 
     try:
-        action = receipt.get("action") or {}
-        if not isinstance(action, dict):
-            raise Er1MalformedReceipt("action is not an object")
-        asserts = action.get("asserts") or {}
+        action = receipt["action"]
+        asserts = action["asserts"]
         expect = _sha256_hex(canonical_json(
-            {"tool": action.get("tool", ""), "asserts": asserts,
-             "resource": action.get("resource", "")}))
-        binding = receipt.get("action_binding") or {}
-        checks["binding"] = isinstance(binding, dict) and binding.get("args_hash") == expect
+            {"tool": action["tool"], "asserts": asserts, "resource": action["resource"]}))
+        binding = receipt["action_binding"]
+        checks["binding"] = binding.get("args_hash") == expect
         if not checks["binding"]:
             errs.append("action_binding: args_hash mismatch")
-        # The binding names the request it binds to. If it names a different
-        # tool or resource than the action, the receipt contradicts itself —
-        # the signature covers both, so this can only be a producer defect.
-        if isinstance(binding, dict):
-            if binding.get("tool") != action.get("tool"):
-                errs.append("action_binding: tool does not mirror action.tool")
-            if binding.get("resource") != action.get("resource"):
-                errs.append("action_binding: resource does not mirror action.resource")
+        # The binding names the request it binds to. If it names a different tool or resource
+        # than the action, the receipt contradicts itself — the signature covers both, so this
+        # can only be a producer defect.
+        if binding.get("tool") != action["tool"]:
+            errs.append("action_binding: tool does not mirror action.tool")
+        if binding.get("resource") != action["resource"]:
+            errs.append("action_binding: resource does not mirror action.resource")
 
-        beliefs = receipt.get("beliefs") or []
+        beliefs = receipt["beliefs"]
         checks["state_root"] = receipt.get("pre_state_root") == _sha256_hex(canonical_json(beliefs))
         if not checks["state_root"]:
             errs.append("pre_state_root mismatch")
 
         c = _conflict(beliefs, asserts)
         recomputed = "HALT" if c is not None else "ALLOW"
-        recorded = receipt.get("decision") or {}
-        if not isinstance(recorded, dict):
-            raise Er1MalformedReceipt("decision is not an object")
+        recorded = receipt["decision"]
         checks["verdict"] = recomputed == recorded.get("verdict")
         if not checks["verdict"]:
             errs.append(f"verdict: recomputed {recomputed} vs recorded {recorded.get('verdict')!r}")
@@ -335,9 +516,8 @@ def verify(receipt: dict, trusted_keys: Optional[set] = None) -> dict:
             if recorded.get("reason_code") != c[1]:
                 errs.append("verdict: reason_code mismatch")
 
-        # er1.schema.json: post_state_root equals pre_state_root on ALLOW and is
-        # null on HALT (the action did not take effect). Unenforced, a receipt
-        # could claim ALLOW while recording no resulting state.
+        # er1.schema.json: post_state_root equals pre_state_root on ALLOW and is null on HALT
+        # (the action did not take effect).
         post = receipt.get("post_state_root")
         if recomputed == "HALT":
             checks["post_state_root"] = post is None
@@ -347,8 +527,7 @@ def verify(receipt: dict, trusted_keys: Optional[set] = None) -> dict:
             checks["post_state_root"] = post == receipt.get("pre_state_root")
             if not checks["post_state_root"]:
                 errs.append("post_state_root: must equal pre_state_root on ALLOW")
-    except (Er1MalformedReceipt, ValueError, TypeError, AttributeError) as exc:
-        # Structurally broken input is FAILED, never ALLOW and never a crash.
+    except (Er1MalformedReceipt, KeyError, ValueError, TypeError, AttributeError) as exc:
         return {"ok": False, "recomputed_verdict": None, "checks": checks,
                 "errors": errs + [f"malformed receipt: {exc}"], "signer": signer}
 
@@ -356,16 +535,24 @@ def verify(receipt: dict, trusted_keys: Optional[set] = None) -> dict:
             "errors": errs, "signer": signer}
 
 
+# ── CLI ──
+
 def _receipts_from(doc: Any, label: str) -> list:
-    """A golden_vectors bundle wraps each receipt as {name, receipt, ...}; a bare receipt has a
-    top-level `decision`. Yields (label, receipt) pairs so the CLI handles both."""
+    """Discriminate a bundle from a bare receipt UNAMBIGUOUSLY.
+
+    A golden_vectors bundle wraps each receipt as {name, receipt, ...}; a bare receipt has its
+    own `decision`/`signature`. A document that presents as both is rejected: an unsigned
+    top-level `receipts` array used to decide what got verified, so a forged receipt carrying
+    one genuine receipt printed VERIFIED and exited 0."""
     if isinstance(doc, dict) and isinstance(doc.get("receipts"), list):
+        if any(k in doc for k in ("decision", "signature", "action", "beliefs")):
+            return [(label, "AMBIGUOUS")]
         out = []
         for i, w in enumerate(doc["receipts"]):
             if isinstance(w, dict) and isinstance(w.get("receipt"), dict):
                 out.append((f"{label}:{w.get('name')}", w["receipt"]))
             else:
-                out.append((f"{label}:entry[{i}]", None))   # malformed → FAILED, not a crash
+                out.append((f"{label}:entry[{i}]", None))
         return out
     return [(label, doc)]
 
@@ -377,8 +564,7 @@ USAGE = ("usage: er1-verify [--pubkey KEY]... <receipt.json | golden_vectors.jso
 
 def main(argv=None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
-    pinned = set()
-    paths = []
+    pinned, paths = set(), []
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -389,7 +575,7 @@ def main(argv=None) -> int:
             pinned.add(argv[i + 1])
             i += 2
             continue
-        if a in ("-h", "--help"):
+        if a in ("-h", "--help") and not paths:
             print(USAGE)
             return 0
         paths.append(a)
@@ -400,43 +586,54 @@ def main(argv=None) -> int:
         return 2
 
     trusted = pinned or None
-    all_ok = True
-    checked = 0
-    for path in paths:
-        try:
-            # utf-8-sig: tolerate a BOM some producers add inadvertently.
-            with open(path, encoding="utf-8-sig") as f:
-                doc = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            print(f"FAILED ✗  {path}  [could not load: {exc}]")
-            all_ok = False
-            continue
-        for label, receipt in _receipts_from(doc, path):
-            checked += 1
-            if receipt is None:
-                print(f"FAILED ✗  {label}  [malformed bundle entry: no receipt object]")
+    all_ok, checked = True, 0
+    try:
+        for path in paths:
+            try:
+                # utf-8-sig: tolerate a BOM some producers add inadvertently.
+                with open(path, encoding="utf-8-sig") as f:
+                    doc = json.load(f)
+            except (OSError, json.JSONDecodeError, ValueError, RecursionError) as exc:
+                print(f"FAILED ✗  {path}  [could not load: {exc}]")
                 all_ok = False
                 continue
-            res = verify(receipt, trusted)
-            d = receipt.get("decision") if isinstance(receipt.get("decision"), dict) else {}
-            status = "VERIFIED ✓" if res["ok"] else "FAILED ✗"
-            try:
-                short = receipt_hash(receipt)[:18] + "…"
-            except (ValueError, TypeError):
-                short = "<uncanonicalizable>"
-            signer = res.get("signer")
-            # The signer is always shown: this verifier proves a receipt is
-            # internally consistent and signed by the key it names — not that
-            # the key belongs to anyone you trust. Pin with --pubkey.
-            sig_note = f"signer={signer[:12]}…" if isinstance(signer, str) and len(signer) > 12 \
-                else f"signer={signer}"
-            if trusted is None and isinstance(signer, str):
-                sig_note += " (unpinned)"
-            print(f"{status}  {label}  verdict={d.get('verdict')} "
-                  f"(recomputed {res['recomputed_verdict']})  hash={short}  {sig_note}")
-            for e in res["errors"]:
-                print(f"    ! {e}")
-            all_ok = all_ok and res["ok"]
+            for label, receipt in _receipts_from(doc, path):
+                checked += 1
+                if receipt is None:
+                    print(f"FAILED ✗  {label}  [malformed bundle entry: no receipt object]")
+                    all_ok = False
+                    continue
+                if receipt == "AMBIGUOUS":
+                    print(f"FAILED ✗  {label}  [ambiguous document: carries both receipt "
+                          f"fields and a `receipts` array]")
+                    all_ok = False
+                    continue
+                res = verify(receipt, trusted)
+                d = receipt.get("decision") if isinstance(receipt.get("decision"), dict) else {}
+                status = "VERIFIED ✓" if res["ok"] else "FAILED ✗"
+                try:
+                    short = receipt_hash(receipt)[:18] + "…"
+                except (Er1MalformedReceipt, ValueError, TypeError, RecursionError):
+                    short = "<uncanonicalizable>"
+                signer = res.get("signer")
+                # The signer is always shown: this verifier proves a receipt is internally
+                # consistent and signed by the key it names — not that the key belongs to
+                # anyone you trust. Pin with --pubkey.
+                sig_note = (f"signer={signer[:12]}…" if isinstance(signer, str) and len(signer) > 12
+                            else f"signer={signer}")
+                if trusted is None and isinstance(signer, str):
+                    sig_note += " (unpinned)"
+                print(f"{status}  {label}  verdict={d.get('verdict')} "
+                      f"(recomputed {res['recomputed_verdict']})  hash={short}  {sig_note}")
+                for e in res["errors"]:
+                    print(f"    ! {e}")
+                all_ok = all_ok and res["ok"]
+    except BrokenPipeError:                    # e.g. `er1-verify … | head`
+        try:
+            sys.stdout.close()
+        except BrokenPipeError:
+            pass
+        return 0 if all_ok else 1
 
     if checked == 0 and all_ok:
         # An empty bundle must never pass a CI gate by saying nothing.

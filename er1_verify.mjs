@@ -3,23 +3,36 @@
 //
 // A SECOND-LANGUAGE verifier for the Epistemic Receipt (ER1) format. It depends on nothing but
 // Node's built-in `node:crypto` — no npm install, no network, no engine code. It reproduces
-// `er1_verify.py` byte-for-byte: the same RFC 8785–compatible canonical JSON, the same Ed25519
-// check over the SHA-256 digest, the same constraint predicate and verdict recomputation. Two
-// independent implementations agreeing on the same signed bytes is what makes ER1 a STANDARD, not
-// a log: anyone can re-derive the verdict in their own stack and get the identical answer.
+// `er1_verify.py` byte-for-byte: the same canonical JSON, the same Ed25519 check over the
+// SHA-256 digest, the same constraint predicate and verdict recomputation. Two independent
+// implementations agreeing on the same signed bytes is what makes ER1 a format anyone can
+// check, not a log you have to trust.
 //
-//     node er1_verify.mjs receipt.json [...]        # verify receipt file(s)
-//     node er1_verify.mjs golden_vectors.json       # self-test the published vectors
+//     node er1_verify.mjs receipt.json [...]              # verify receipt file(s)
+//     node er1_verify.mjs --pubkey <key> receipt.json     # pin the signer you actually trust
+//     node er1_verify.mjs golden_vectors.json             # self-test the published vectors
 //
 // What it certifies: the verdict correctly follows from the recorded, signed pre-state — NOT the
 // empirical truth of the constraints ("garbage in, certified garbage out").
+//
+// SOUNDNESS RULES (v1.1, after the 2026-08-04 adversarial review) — every rule below exists
+// because a receipt that should not have been trusted printed VERIFIED. The prose lives in
+// er1_verify.py; this file must match it behaviour-for-behaviour, and tests/conformance_cases
+// is run against both to prove it.
 import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-// ── canonical JSON (RFC 8785–compatible) — vendored verbatim from the spec ──
+const MAX_DEPTH = 100;
+const MAX_SAFE_INT = Number.MAX_SAFE_INTEGER; // 2**53 - 1
+
+export class Er1MalformedReceipt extends Error {}
+
+// ── canonical JSON — vendored verbatim from the spec ──
+const nfc = (s) => s.normalize("NFC");
+
 function escapeString(s) {
-  s = s.normalize("NFC");
+  s = nfc(s);
   let out = '"';
   for (const ch of s) {
     const cp = ch.codePointAt(0);
@@ -42,86 +55,204 @@ function escapeString(s) {
   return out + '"';
 }
 
+// Integers only, and only those both languages represent exactly. Anything else is refused
+// rather than guessed at: ECMAScript ToString and Python repr share no number grammar, so
+// emitting a float means two conformant verifiers can disagree about the canonical bytes —
+// which is a disagreement about whether a receipt was tampered with.
 function fmtNumber(n) {
-  if (!Number.isFinite(n)) throw new Error("non-finite number");
+  if (!Number.isFinite(n)) throw new Er1MalformedReceipt("non-finite number");
+  if (!Number.isInteger(n)) {
+    throw new Er1MalformedReceipt(`non-integral number ${n} is not canonicalizable (integers only)`);
+  }
+  if (Math.abs(n) > MAX_SAFE_INT) {
+    throw new Er1MalformedReceipt(
+      `integer ${n} is outside the exactly-representable range (|n| <= 2**53-1)`);
+  }
   if (Object.is(n, -0)) return "0";
-  return String(n); // ECMA ToString — the reference er1_verify.py's float path mirrors
+  return String(n);
 }
 
-function canon(v) {
+function canon(v, depth = 0) {
+  if (depth > MAX_DEPTH) throw new Er1MalformedReceipt(`nesting deeper than ${MAX_DEPTH} levels`);
   if (v === null) return "null";
   if (typeof v === "boolean") return v ? "true" : "false";
   if (typeof v === "number") return fmtNumber(v);
   if (typeof v === "string") return escapeString(v);
-  if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
+  if (Array.isArray(v)) return "[" + v.map((x) => canon(x, depth + 1)).join(",") + "]";
   if (typeof v === "object") {
-    // NFC BEFORE ordering — see the note in er1_verify.py::_canon. Sorting raw
-    // keys and normalizing at emit time can mis-order and can emit duplicates.
+    // NFC BEFORE ordering — the canonical form is defined over normalized strings.
     const norm = new Map();
     for (const k of Object.keys(v)) {
-      const nk = k.normalize("NFC");
-      if (norm.has(nk)) throw new Error("duplicate object key after NFC normalization: " + nk);
+      const nk = nfc(k);
+      if (norm.has(nk)) {
+        throw new Er1MalformedReceipt("duplicate object key after NFC normalization: " + nk);
+      }
       norm.set(nk, v[k]);
     }
     const keys = [...norm.keys()].sort(); // default UTF-16 code-unit order == python _utf16_key
-    return "{" + keys.map((k) => escapeString(k) + ":" + canon(norm.get(k))).join(",") + "}";
+    return "{" + keys.map((k) => escapeString(k) + ":" + canon(norm.get(k), depth + 1)).join(",") + "}";
   }
-  throw new TypeError("cannot canonicalize " + typeof v);
+  throw new Er1MalformedReceipt("cannot canonicalize " + typeof v);
 }
 
 const canonicalBytes = (v) => Buffer.from(canon(v), "utf8");
 const sha256Hex = (buf) => "sha256:" + createHash("sha256").update(buf).digest("hex");
 
-// ── the conflict predicate — vendored verbatim from the spec ──
-function parseVer(s) {
-  return String(s).trim().split(".").map((part) => {
-    let num = "";
-    for (const ch of part) { if (ch >= "0" && ch <= "9") num += ch; else break; }
-    return num ? parseInt(num, 10) : 0;
-  });
+// Exposed for tests/differential_fuzz.py, which proves this file and er1_verify.py produce
+// identical canonical bytes (or both refuse) across random documents.
+export const canonicalJsonForFuzz = (v) => canon(v);
+
+// ── structural validation — runs BEFORE the predicate, and fails closed ──
+const VERDICTS = new Set(["ALLOW", "HALT"]);
+const RULES = new Set(["equals", "excludes", "satisfies"]);
+const STATUSES = new Set(["active", "superseded"]);
+const SOURCE_KINDS = new Set(["deterministic", "nl_extracted"]);
+const BELIEF_CLASSES = new Set(["CERTIFIED", "BEST_EFFORT"]);
+
+const isPlainObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+
+function requireStr(obj, field, where) {
+  const v = obj[field];
+  if (typeof v !== "string") {
+    throw new Er1MalformedReceipt(`${where}.${field} must be a string, got ${v === null ? "null" : typeof v}`);
+  }
+  return v;
 }
-function verCmp(a, b) {
-  const pa = parseVer(a), pb = parseVer(b), n = Math.max(pa.length, pb.length);
+
+export function validateReceipt(r) {
+  if (!isPlainObject(r)) throw new Er1MalformedReceipt("receipt is not a JSON object");
+  if ("receipts" in r) {
+    throw new Er1MalformedReceipt(
+      "document carries both receipt fields and a `receipts` array — ambiguous");
+  }
+
+  const a = r.action;
+  if (!isPlainObject(a)) throw new Er1MalformedReceipt("action must be an object");
+  requireStr(a, "tool", "action");
+  requireStr(a, "resource", "action");
+  if (!isPlainObject(a.asserts)) throw new Er1MalformedReceipt("action.asserts must be an object");
+  for (const [k, val] of Object.entries(a.asserts)) {
+    if (typeof val !== "string") {
+      throw new Er1MalformedReceipt(
+        `action.asserts[${JSON.stringify(k)}] must be a string, got ${val === null ? "null" : typeof val}`);
+    }
+  }
+
+  if (!isPlainObject(r.action_binding)) {
+    throw new Er1MalformedReceipt("action_binding must be an object");
+  }
+
+  if (!Array.isArray(r.beliefs)) throw new Er1MalformedReceipt("beliefs must be an array");
+  r.beliefs.forEach((b, i) => {
+    if (!isPlainObject(b)) throw new Er1MalformedReceipt(`beliefs[${i}] is not an object`);
+    const status = b.status ?? "active";
+    if (!STATUSES.has(status)) {
+      throw new Er1MalformedReceipt(`beliefs[${i}].status ${JSON.stringify(status)} is not a known status`);
+    }
+    if (!SOURCE_KINDS.has(b.source_kind)) {
+      throw new Er1MalformedReceipt(
+        `beliefs[${i}].source_kind ${JSON.stringify(b.source_kind)} is not a known source_kind`);
+    }
+    if ("belief_class" in b && !BELIEF_CLASSES.has(b.belief_class)) {
+      throw new Er1MalformedReceipt(
+        `beliefs[${i}].belief_class ${JSON.stringify(b.belief_class)} is not a known belief_class`);
+    }
+    if (status === "active" && b.source_kind === "deterministic") {
+      requireStr(b, "belief_id", `beliefs[${i}]`);
+      requireStr(b, "entity", `beliefs[${i}]`);
+      const rule = requireStr(b, "rule", `beliefs[${i}]`);
+      if (!RULES.has(rule)) {
+        throw new Er1MalformedReceipt(`beliefs[${i}].rule ${JSON.stringify(rule)} is not a known rule`);
+      }
+      if (rule !== "excludes") requireStr(b, "value", `beliefs[${i}]`);
+    }
+  });
+
+  if (!isPlainObject(r.decision)) throw new Er1MalformedReceipt("decision must be an object");
+  if (!VERDICTS.has(r.decision.verdict)) {
+    throw new Er1MalformedReceipt(
+      `decision.verdict ${JSON.stringify(r.decision.verdict)} is not one of ALLOW, HALT`);
+  }
+  // The whole body must be canonicalizable, anywhere in the document — a receipt carrying a
+  // number or nesting depth we cannot serialize exactly has no well-defined signed form.
+  canonicalBytes(body(r));
+}
+
+// ── the conflict predicate — vendored verbatim from the spec ──
+// Strict dotted-numeric parse; null when the string is not a version. The old parser mapped
+// any non-numeric component to 0, so `<2.0` was satisfied by "latest", "main" and "".
+function parseVer(s) {
+  const text = String(s).trim();
+  if (!text) return null;
+  const out = [];
+  for (const part of text.split(".")) {
+    if (!part || ![...part].every((ch) => ch >= "0" && ch <= "9")) return null;
+    out.push(Number(part));
+    if (!Number.isSafeInteger(out[out.length - 1])) return null;  // stay exact, like Python
+  }
+  return out;
+}
+
+function verCmp(pa, pb) {
+  const n = Math.max(pa.length, pb.length);
   for (let i = 0; i < n; i++) {
     const x = pa[i] ?? 0, y = pb[i] ?? 0;
     if (x !== y) return x > y ? 1 : -1;
   }
   return 0;
 }
+
 function compatible(proposed, constraint) {
-  // PEP 440 compatible-release (~=): proposed >= constraint AND shares its prefix (all but the
-  // constraint's last component must match). ~=2.0 allows 2.5 not 3.0; ~=2.0.1 allows 2.0.5 not 2.1.0.
   if (verCmp(proposed, constraint) < 0) return false;
-  const cv = parseVer(constraint);
-  if (cv.length < 2) return true;
-  const prefix = cv.slice(0, -1);
-  const pv = parseVer(proposed);
-  for (let i = 0; i < prefix.length; i++) if ((pv[i] ?? 0) !== prefix[i]) return false;
+  if (constraint.length < 2) return true;
+  const prefix = constraint.slice(0, -1);
+  for (let i = 0; i < prefix.length; i++) if ((proposed[i] ?? 0) !== prefix[i]) return false;
   return true;
 }
-function satisfies(proposed, constraint) {
-  const c = constraint.trim();
+
+function satisfies(proposedRaw, constraintRaw) {
+  const c = String(constraintRaw).trim();
   for (const op of [">=", "<=", "==", "~=", ">", "<", "="]) {
     if (c.startsWith(op)) {
-      const target = c.slice(op.length).trim();
+      const target = parseVer(c.slice(op.length));
+      const proposed = parseVer(proposedRaw);
+      if (target === null || proposed === null) {
+        throw new Er1MalformedReceipt(
+          `cannot evaluate ${op} between ${JSON.stringify(String(proposedRaw))} and ${JSON.stringify(c)}: not versions`);
+      }
       if (op === "~=") return compatible(proposed, target);
       const cmp = verCmp(proposed, target);
       return { ">=": cmp >= 0, ">": cmp > 0, "<=": cmp <= 0, "<": cmp < 0,
                "==": cmp === 0, "=": cmp === 0 }[op];
     }
   }
-  return verCmp(proposed, c) === 0;
+  const target = parseVer(c), proposed = parseVer(proposedRaw);
+  if (target === null || proposed === null) return String(proposedRaw) === c;
+  return verCmp(proposed, target) === 0;
 }
+
 function conflict(beliefs, asserts) {
+  // Identity is normalized on both sides — canonical JSON normalizes these strings before they
+  // are signed, so comparing raw would let one signed byte-string carry two identities.
+  const normAsserts = new Map();
+  for (const [k, v] of Object.entries(asserts)) {
+    const nk = nfc(k);
+    if (normAsserts.has(nk)) {
+      throw new Er1MalformedReceipt(`action.asserts has two keys that are the same after NFC: ${nk}`);
+    }
+    normAsserts.set(nk, v);
+  }
   for (const b of beliefs) {
     if ((b.status ?? "active") !== "active" || b.source_kind !== "deterministic") continue;
-    const { entity: ent, rule, value: val } = b;
+    const ent = nfc(b.entity), rule = b.rule;
     if (rule === "excludes") {
-      if (Object.hasOwn(asserts, ent)) return [b.belief_id, "BANNED_ENTITY"];
-    } else if (Object.hasOwn(asserts, ent)) {
-      const proposed = String(asserts[ent]);
-      if (rule === "equals" && proposed !== val) return [b.belief_id, "SUPERSEDED_VALUE"];
-      if (rule === "satisfies" && !satisfies(proposed, val)) return [b.belief_id, "CONSTRAINT_VIOLATION"];
+      if (normAsserts.has(ent)) return [b.belief_id, "BANNED_ENTITY"];
+    } else if (normAsserts.has(ent)) {
+      const proposed = String(normAsserts.get(ent));
+      if (rule === "equals" && proposed !== b.value) return [b.belief_id, "SUPERSEDED_VALUE"];
+      if (rule === "satisfies" && !satisfies(proposed, b.value)) {
+        return [b.belief_id, "CONSTRAINT_VIOLATION"];
+      }
     }
   }
   return null;
@@ -131,97 +262,201 @@ function conflict(beliefs, asserts) {
 const body = (r) => ({ ...r, signature: null });
 export const receiptHash = (r) => sha256Hex(canonicalBytes(body(r)));
 
+// Small-order Ed25519 point encodings (libsodium's has_small_order blacklist). A signature
+// built from these verifies against ANY message, so one constant block would forge every
+// receipt. Rejected for both the public key and the signature's R component.
+const SMALL_ORDER = new Set([
+  "0000000000000000000000000000000000000000000000000000000000000000",
+  "0100000000000000000000000000000000000000000000000000000000000000",
+  "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+  "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+  "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+]);
+
 function verifySignature(r) {
   const sb = r.signature;
-  if (!sb || sb.algorithm !== "ed25519") return false;
+  if (!isPlainObject(sb) || sb.algorithm !== "ed25519") return false;
+  if (typeof sb.public_key !== "string" || typeof sb.signature !== "string") return false;
   try {
-    // The signed message is the SHA-256 digest of the canonical body (matches er1_verify.py and the
-    // signer; pinned by golden_vectors.json). edVerify(null, digest, ...) is plain Ed25519 over that
-    // 32-byte message — identical to the Python side, as the golden vectors prove.
+    const pubRaw = Buffer.from(sb.public_key, "base64url");
+    const sigRaw = Buffer.from(sb.signature, "base64url");
+    if (pubRaw.length !== 32 || sigRaw.length !== 64) return false;
+    if (SMALL_ORDER.has(pubRaw.toString("hex")) ||
+        SMALL_ORDER.has(sigRaw.subarray(0, 32).toString("hex"))) {
+      return false;                       // a signature nobody produced must not verify
+    }
     const digest = createHash("sha256").update(canonicalBytes(body(r))).digest();
     const pub = createPublicKey({
-      key: { kty: "OKP", crv: "Ed25519", x: String(sb.public_key).replace(/=+$/, "") },
+      key: { kty: "OKP", crv: "Ed25519", x: pubRaw.toString("base64url") },
       format: "jwk",
     });
-    return edVerify(null, digest, pub, Buffer.from(sb.signature, "base64url"));
+    return edVerify(null, digest, pub, sigRaw);
   } catch {
     return false;
   }
 }
 
-export function verify(r) {
+export function verify(r, trustedKeys = null) {
   const errors = [], checks = {};
 
+  let signer = null;
+  if (isPlainObject(r) && isPlainObject(r.signature) && typeof r.signature.public_key === "string") {
+    signer = r.signature.public_key;
+  }
+
+  // The signature is checked FIRST and unconditionally — see er1_verify.py::verify.
   checks.signature = verifySignature(r);
   if (!checks.signature) errors.push("signature: invalid or missing");
 
-  const a = r.action ?? {};
-  const expect = sha256Hex(canonicalBytes(
-    { tool: a.tool ?? "", asserts: a.asserts ?? {}, resource: a.resource ?? "" }));
-  const binding = r.action_binding ?? {};
-  checks.binding = binding.args_hash === expect;
-  if (!checks.binding) errors.push("action_binding: args_hash mismatch");
-  // The binding names the request it binds to; a mismatch is a self-contradicting
-  // receipt (the signature covers both). Mirrors er1_verify.py.
-  if (binding.tool !== a.tool) errors.push("action_binding: tool does not mirror action.tool");
-  if (binding.resource !== a.resource) errors.push("action_binding: resource does not mirror action.resource");
-
-  const beliefs = r.beliefs ?? [];
-  checks.state_root = r.pre_state_root === sha256Hex(canonicalBytes(beliefs));
-  if (!checks.state_root) errors.push("pre_state_root mismatch");
-
-  const c = conflict(beliefs, a.asserts ?? {});
-  const recomputed = c !== null ? "HALT" : "ALLOW";
-  const recorded = r.decision ?? {};
-  checks.verdict = recomputed === recorded.verdict;
-  if (!checks.verdict) errors.push(`verdict: recomputed ${recomputed} vs recorded ${JSON.stringify(recorded.verdict)}`);
-  if (c !== null) {
-    if (recorded.conflicting_belief_id !== c[0]) errors.push("verdict: conflicting_belief_id mismatch");
-    if (recorded.reason_code !== c[1]) errors.push("verdict: reason_code mismatch");
+  try {
+    validateReceipt(r);
+  } catch (exc) {
+    return { ok: false, recomputedVerdict: null, checks,
+             errors: [...errors, `malformed receipt: ${exc.message}`], signer };
   }
 
-  // er1.schema.json: post_state_root equals pre_state_root on ALLOW, null on
-  // HALT (the action did not take effect). Mirrors er1_verify.py.
-  const post = r.post_state_root ?? null;
-  if (recomputed === "HALT") {
-    checks.post_state_root = post === null;
-    if (!checks.post_state_root) errors.push("post_state_root: must be null on HALT");
-  } else {
-    checks.post_state_root = post === r.pre_state_root;
-    if (!checks.post_state_root) errors.push("post_state_root: must equal pre_state_root on ALLOW");
+  if (trustedKeys !== null) {
+    checks.trusted_signer = trustedKeys.has(signer);
+    if (!checks.trusted_signer) errors.push(`signer not in pinned key set: ${JSON.stringify(signer)}`);
   }
 
-  return { ok: errors.length === 0, recomputedVerdict: recomputed, checks, errors };
+  try {
+    const a = r.action;
+    const expect = sha256Hex(canonicalBytes({ tool: a.tool, asserts: a.asserts, resource: a.resource }));
+    const binding = r.action_binding;
+    checks.binding = binding.args_hash === expect;
+    if (!checks.binding) errors.push("action_binding: args_hash mismatch");
+    if (binding.tool !== a.tool) errors.push("action_binding: tool does not mirror action.tool");
+    if (binding.resource !== a.resource) errors.push("action_binding: resource does not mirror action.resource");
+
+    const beliefs = r.beliefs;
+    checks.state_root = r.pre_state_root === sha256Hex(canonicalBytes(beliefs));
+    if (!checks.state_root) errors.push("pre_state_root mismatch");
+
+    const c = conflict(beliefs, a.asserts);
+    const recomputed = c !== null ? "HALT" : "ALLOW";
+    const recorded = r.decision;
+    checks.verdict = recomputed === recorded.verdict;
+    if (!checks.verdict) {
+      errors.push(`verdict: recomputed ${recomputed} vs recorded ${JSON.stringify(recorded.verdict)}`);
+    }
+    if (c !== null) {
+      if (recorded.conflicting_belief_id !== c[0]) errors.push("verdict: conflicting_belief_id mismatch");
+      if (recorded.reason_code !== c[1]) errors.push("verdict: reason_code mismatch");
+    }
+
+    const post = r.post_state_root ?? null;
+    if (recomputed === "HALT") {
+      checks.post_state_root = post === null;
+      if (!checks.post_state_root) errors.push("post_state_root: must be null on HALT");
+    } else {
+      checks.post_state_root = post === r.pre_state_root;
+      if (!checks.post_state_root) errors.push("post_state_root: must equal pre_state_root on ALLOW");
+    }
+
+    return { ok: errors.length === 0, recomputedVerdict: recomputed, checks, errors, signer };
+  } catch (exc) {
+    return { ok: false, recomputedVerdict: null, checks,
+             errors: [...errors, `malformed receipt: ${exc.message}`], signer };
+  }
 }
 
 // ── CLI ──
-function receiptsFrom(doc) {
-  // A golden_vectors bundle wraps each receipt as {name, receipt, ...}; a bare receipt has `decision`.
-  if (doc && Array.isArray(doc.receipts)) return doc.receipts.map((w) => [w.name, w.receipt]);
-  return [[null, doc]];
+// Discriminate a bundle from a bare receipt UNAMBIGUOUSLY: a document that presents as both is
+// rejected, because an unsigned top-level `receipts` array used to decide what got verified.
+function receiptsFrom(doc, label) {
+  if (isPlainObject(doc) && Array.isArray(doc.receipts)) {
+    if (["decision", "signature", "action", "beliefs"].some((k) => k in doc)) {
+      return [[label, "AMBIGUOUS"]];
+    }
+    return doc.receipts.map((w, i) =>
+      isPlainObject(w) && isPlainObject(w.receipt)
+        ? [`${label}:${w.name}`, w.receipt]
+        : [`${label}:entry[${i}]`, null]);
+  }
+  return [[label, doc]];
 }
 
+const USAGE =
+  "usage: node er1_verify.mjs [--pubkey KEY]... <receipt.json | golden_vectors.json> [...]\n" +
+  "  --pubkey KEY   pin a trusted signer (repeatable). Without it, a receipt is\n" +
+  "                 verified against the key it carries — see SCOPE_OF_CERTIFICATION.md.\n";
+
 function main(argv) {
-  if (argv.length === 0) {
-    process.stderr.write("usage: node er1_verify.mjs <receipt.json | golden_vectors.json> [...]\n");
+  const pinned = new Set(), paths = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--pubkey") {
+      if (i + 1 >= argv.length) {
+        process.stderr.write("error: --pubkey needs a value\n" + USAGE);
+        return 2;
+      }
+      pinned.add(argv[++i]);
+      continue;
+    }
+    if ((argv[i] === "-h" || argv[i] === "--help") && paths.length === 0) {
+      process.stdout.write(USAGE);
+      return 0;
+    }
+    paths.push(argv[i]);
+  }
+  if (paths.length === 0) {
+    process.stderr.write(USAGE);
     return 2;
   }
-  let allOk = true;
-  for (const path of argv) {
-    const doc = JSON.parse(readFileSync(path, "utf8"));
-    for (const [name, r] of receiptsFrom(doc)) {
-      const res = verify(r);
-      const label = name ? `${path}:${name}` : path;
+
+  const trusted = pinned.size ? pinned : null;
+  let allOk = true, checked = 0;
+  for (const path of paths) {
+    let doc;
+    try {
+      doc = JSON.parse(readFileSync(path, "utf8").replace(/^﻿/, ""));
+    } catch (exc) {
+      process.stdout.write(`FAILED ✗  ${path}  [could not load: ${exc.message}]\n`);
+      allOk = false;
+      continue;
+    }
+    for (const [label, r] of receiptsFrom(doc, path)) {
+      checked++;
+      if (r === null) {
+        process.stdout.write(`FAILED ✗  ${label}  [malformed bundle entry: no receipt object]\n`);
+        allOk = false;
+        continue;
+      }
+      if (r === "AMBIGUOUS") {
+        process.stdout.write(
+          `FAILED ✗  ${label}  [ambiguous document: carries both receipt fields and a \`receipts\` array]\n`);
+        allOk = false;
+        continue;
+      }
+      const res = verify(r, trusted);
+      const v = isPlainObject(r) && isPlainObject(r.decision) ? r.decision.verdict : undefined;
       const status = res.ok ? "VERIFIED ✓" : "FAILED ✗";
-      const v = (r.decision ?? {}).verdict;
-      process.stdout.write(`${status}  ${label}  verdict=${v} (recomputed ${res.recomputedVerdict})  hash=${receiptHash(r).slice(0, 18)}…\n`);
+      let short;
+      try {
+        short = receiptHash(r).slice(0, 18) + "…";
+      } catch {
+        short = "<uncanonicalizable>";
+      }
+      let sigNote = typeof res.signer === "string" && res.signer.length > 12
+        ? `signer=${res.signer.slice(0, 12)}…` : `signer=${res.signer}`;
+      if (trusted === null && typeof res.signer === "string") sigNote += " (unpinned)";
+      process.stdout.write(
+        `${status}  ${label}  verdict=${v} (recomputed ${res.recomputedVerdict})  hash=${short}  ${sigNote}\n`);
       for (const e of res.errors) process.stdout.write(`    ! ${e}\n`);
       allOk = allOk && res.ok;
     }
+  }
+  if (checked === 0 && allOk) {
+    // An empty bundle must never pass a CI gate by saying nothing.
+    process.stderr.write("FAILED ✗  no receipts found in input\n");
+    return 1;
   }
   return allOk ? 0 : 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.on("EPIPE", () => process.exit(0));
   process.exit(main(process.argv.slice(2)));
 }

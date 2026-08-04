@@ -141,9 +141,14 @@ for (const tf of tamperedFiles) {
   const { browser: badRes, hash: badHash } = await agreeWithRef(`fixture:${tf}`, tampered);
   assert.ok(!badRes.ok, `fixture:${tf} must FAIL`);
   assert.equal(badRes.checks.signature, false, `fixture:${tf}: signature must fail`);
-  assert.equal(badRes.checks.verdict, false, `fixture:${tf}: verdict recompute must catch the tamper`);
   assert.ok(badRes.errors.some((e) => e.startsWith("signature:")), `fixture:${tf}: signature error class`);
-  assert.ok(badRes.errors.some((e) => e.startsWith("verdict:")), `fixture:${tf}: verdict error class`);
+  // The tamper must ALSO be caught independently of the signature — either the recomputed
+  // verdict disagrees with the recorded one, or the tampered document no longer satisfies the
+  // structural rules at all. Both are the tamper being caught by recomputation; asserting only
+  // the first would have made a stricter verifier look like a regression.
+  assert.ok(
+    badRes.checks.verdict === false || badRes.errors.some((e) => e.startsWith("malformed receipt:")),
+    `fixture:${tf}: recomputation must catch the tamper, errors=${JSON.stringify(badRes.errors)}`);
   results.push({ kind: "fixture_tampered", name: tf, ok: badRes.ok,
                  recomputedVerdict: badRes.recomputedVerdict, receiptHash: badHash, errors: badRes.errors });
   log(`FAILED ✗ (as required)  fixture:${tf}  [${badRes.errors.join(" | ")}]`);
