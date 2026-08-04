@@ -1,16 +1,24 @@
-// Run the shared adversarial corpus against the Node reference verifier.
+// Run the shared adversarial corpus against a JavaScript verifier.
 //
-//     node tests/run_conformance_cases.mjs [--json]
+//     node tests/run_conformance_cases.mjs [--json] [--browser]
 //
-// The same corpus is run against Python (tests/run_conformance_cases.py) and the browser build
-// (tests/test_browser_verifier.mjs). Three implementations, one set of expectations — a defect
-// fixed in one language cannot silently survive in another.
+// Default target is the Node reference verifier (er1_verify.mjs); --browser runs the SAME corpus
+// against the browser build (verify/er1_verify.browser.mjs) under Node's own WebCrypto. The
+// corpus also runs against Python (tests/run_conformance_cases.py). Three implementations, one
+// set of expectations — a defect fixed in one language cannot silently survive in another.
+// tests/test_conformance_corpus.py is what makes all three gate CI.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { verify } = await import(join(here, "..", "er1_verify.mjs"));
+const useBrowser = process.argv.includes("--browser");
+const modulePath = useBrowser
+  ? join(here, "..", "verify", "er1_verify.browser.mjs")
+  : join(here, "..", "er1_verify.mjs");
+const implementation = useBrowser ? "er1_verify.browser.mjs" : "er1_verify.mjs";
+// The browser build's verify() is async (WebCrypto); awaiting a sync return is harmless.
+const { verify } = await import(modulePath);
 const corpus = JSON.parse(readFileSync(join(here, "conformance_cases.json"), "utf8"));
 
 const asJson = process.argv.includes("--json");
@@ -20,7 +28,7 @@ let failed = 0;
 for (const c of corpus.cases) {
   let res;
   try {
-    res = verify(c.doc);
+    res = await verify(c.doc);
   } catch (exc) {
     res = { ok: null, errors: [`THREW: ${exc.message}`] };   // a crash is always a failure
   }
@@ -40,7 +48,7 @@ for (const c of corpus.cases) {
 }
 
 if (asJson) {
-  console.log(JSON.stringify({ implementation: "er1_verify.mjs", failed, results }, null, 1));
+  console.log(JSON.stringify({ implementation, failed, results }, null, 1));
 } else {
   console.log(`\n${corpus.cases.length - failed}/${corpus.cases.length} conformance cases pass`);
 }

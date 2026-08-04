@@ -3,9 +3,12 @@
 
     python3 tests/run_conformance_cases.py
 
-Also exposed as pytest cases so `pytest` covers it. The same corpus runs against Node
-(tests/run_conformance_cases.mjs) and the browser build — three implementations, one set of
-expectations.
+The same corpus runs against Node and the browser build (tests/run_conformance_cases.mjs, with
+--browser) — three implementations, one set of expectations.
+
+test_every_conformance_case below is NOT what gates CI: pytest's default `python_files` pattern
+is test_*.py, so this file is never collected. tests/test_conformance_corpus.py is the gate — it
+runs all three implementations and asserts they agree case by case.
 """
 import json
 import pathlib

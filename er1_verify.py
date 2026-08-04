@@ -217,12 +217,35 @@ def _jt(v: Any) -> str:
     return "object"
 
 
+def _js_shape(v: Any) -> Any:
+    """Integral floats print as `1.0` in Python and `1` in JavaScript. Error text is compared
+    literally across implementations, so a value quoted into a message is normalized to the
+    shape JSON.stringify would render."""
+    if isinstance(v, float) and not isinstance(v, bool) and v.is_integer() and abs(v) <= 2**53 - 1:
+        return int(v)
+    if isinstance(v, dict):
+        return {k: _js_shape(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_js_shape(x) for x in v]
+    return v
+
+
 def _q(v: Any) -> str:
-    """JSON.stringify-compatible rendering of a value inside an error message."""
+    """JSON.stringify-compatible rendering of a value inside an error message. Compact
+    separators, because a malformed-field message may now quote a whole array or object and
+    Python's default `, ` would not match the JavaScript verifier byte for byte."""
     try:
-        return json.dumps(v, ensure_ascii=False)
-    except (TypeError, ValueError):
+        return json.dumps(_js_shape(v), ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError, RecursionError):
         return str(v)
+
+
+def _in_enum(v: Any, allowed: set) -> bool:
+    """`v in some_set` HASHES v, so an enum field holding a list or an object raised
+    TypeError — an uncaught traceback where JavaScript's Set.has() simply returned false and
+    the receipt was reported FAILED. A crash is not a verdict. Every enum here holds strings,
+    so a value that is not a string is never a member."""
+    return isinstance(v, str) and v in allowed
 
 
 def _require_str(obj: dict, field: str, where: str, id_safe: bool = False) -> str:
@@ -284,14 +307,14 @@ def validate_receipt(receipt: Any) -> None:
         # an explicit null, so one verifier read the constraint as active and the other
         # rejected the receipt. The field must be present and explicit.
         status = b.get("status")
-        if status not in STATUSES:
+        if not _in_enum(status, STATUSES):
             raise Er1MalformedReceipt(
                 f"beliefs[{i}].status {_q(status)} is not a known status")
         source_kind = b.get("source_kind")
-        if source_kind not in SOURCE_KINDS:
+        if not _in_enum(source_kind, SOURCE_KINDS):
             raise Er1MalformedReceipt(
                 f"beliefs[{i}].source_kind {_q(source_kind)} is not a known source_kind")
-        if "belief_class" in b and b["belief_class"] not in BELIEF_CLASSES:
+        if "belief_class" in b and not _in_enum(b["belief_class"], BELIEF_CLASSES):
             raise Er1MalformedReceipt(
                 f"beliefs[{i}].belief_class {_q(b['belief_class'])} is not a known belief_class")
         # Only constraints that can gate must be fully specified; a superseded or
@@ -309,7 +332,7 @@ def validate_receipt(receipt: Any) -> None:
     decision = receipt.get("decision")
     if not isinstance(decision, dict):
         raise Er1MalformedReceipt("decision must be an object")
-    if decision.get("verdict") not in VERDICTS:
+    if not _in_enum(decision.get("verdict"), VERDICTS):
         raise Er1MalformedReceipt(
             f"decision.verdict {_q(decision.get('verdict'))} is not one of ALLOW, HALT")
 

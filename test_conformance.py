@@ -110,6 +110,9 @@ def test_adversarial_input_fails_and_never_crashes():
         {"action": {"asserts": None}},
         [],                                                              # not even an object
     ]
+    # Unhashable enum values are NOT tested here: a stub this small dies on `action must be an
+    # object` first, so it would never reach the membership test that used to crash. That case
+    # needs a whole valid receipt — see the test below.
     for doc in bad:
         res = ER1.verify(doc)
         assert res["ok"] is False, doc
@@ -126,6 +129,39 @@ def test_unreadable_input_is_failed_not_a_traceback(tmp_path):
     junk = tmp_path / "junk.json"
     junk.write_text("{not json")
     assert ER1.main([str(junk)]) == 1
+
+
+def test_malformed_enum_values_print_a_verdict_instead_of_a_traceback(tmp_path, capsys):
+    """A crash is not a verdict. These four inputs exited 1 with an uncaught TypeError, and a
+    sweep that only reads exit codes cannot tell that apart from a clean FAILED — the assertion
+    has to be on what was PRINTED."""
+    good = copy.deepcopy(GOLDEN["receipts"][0]["receipt"])
+    cases = [
+        ("decision.verdict", lambda r: r["decision"].update(verdict=[])),
+        ("beliefs[0].status", lambda r: r["beliefs"][0].update(status=[])),
+        ("beliefs[0].source_kind", lambda r: r["beliefs"][0].update(source_kind={})),
+        ("beliefs[0].belief_class", lambda r: r["beliefs"][0].update(belief_class=[])),
+    ]
+    for field, mutate in cases:
+        rec = copy.deepcopy(good)
+        mutate(rec)
+        p = tmp_path / "bad.json"
+        p.write_text(json.dumps(rec))
+        assert ER1.main([str(p)]) == 1, field
+        out = capsys.readouterr().out
+        assert out.startswith("FAILED ✗"), f"{field}: no verdict line, got {out!r}"
+        assert f"malformed receipt: {field} " in out, f"{field}: not reported as malformed"
+
+
+def test_quoted_values_in_errors_render_the_javascript_way(tmp_path):
+    """The malformed-receipt strings are compared literally against er1_verify.mjs, so a value
+    quoted into one must match JSON.stringify: no space after a comma, and no trailing `.0`."""
+    assert ER1._q([1, 2]) == "[1,2]"
+    assert ER1._q({"a": 1, "b": [2, 3]}) == '{"a":1,"b":[2,3]}'
+    assert ER1._q(1.0) == "1"
+    assert ER1._q("active") == '"active"'
+    assert ER1._q(None) == "null"
+    assert ER1._q(True) == "true"
 
 
 def test_pubkey_pinning_rejects_a_self_signed_receipt():

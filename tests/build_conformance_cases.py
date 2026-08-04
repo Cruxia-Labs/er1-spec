@@ -176,9 +176,15 @@ case("identity_assert_key_non_ascii",
      receipt(action={"tool": "deploy", "asserts": {"caf\u00e9": "prod"},
                      "resource": "k8s://prod"}),
      False, "printable ASCII", "Same class, on the assert side.")
-case("status_explicit_null", receipt(beliefs=[belief(status=None)]), False, "malformed",
-     "Python's dict.get(k, 'active') and JavaScript's `?? 'active'` disagree on an explicit "
-     "null: one read the constraint as active, the other rejected the receipt.")
+# An explicit null is not an absent key. `.get(k, default)` fires only when the key is missing;
+# `?? default` fires on null too — so a producer emitting `"status": null` was rejected by one
+# verifier and read as "active" by the other. Every enum field on a belief carries this hazard,
+# so all three are pinned, including the one that is optional and guarded by a presence test.
+for field in ["status", "source_kind", "belief_class"]:
+    case(f"{field}_explicit_null", receipt(beliefs=[belief(**{field: None})]), False, "malformed",
+         f"beliefs[0].{field} = null: Python's dict.get(k, default) and JavaScript's "
+         f"`?? default` disagree on an explicit null, so one verifier read the constraint as "
+         f"present-and-valid and the other rejected the receipt. Schema requires a string.")
 case("version_leading_whitespace",
      receipt(action={"tool": "pip", "asserts": {"dep:x": "\u180e1.0"}, "resource": "req.txt"},
              action_binding={"tool": "pip", "args_hash": SHA0, "resource": "req.txt"},

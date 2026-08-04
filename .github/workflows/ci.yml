@@ -29,3 +29,11 @@ jobs:
         run: node er1_verify.mjs golden_vectors.json
       - name: Browser verifier — WebCrypto-only module under Node's globalThis.crypto (golden vectors + tamper pairs)
         run: node tests/test_browser_verifier.mjs
+      # The adversarial corpus, run against each JavaScript build on its own. The pytest step
+      # above already gates all three implementations and their agreement
+      # (tests/test_conformance_corpus.py); these two steps make a corpus failure legible as
+      # itself in the log, and keep the JS side gated even if Python collection ever changes.
+      - name: Adversarial corpus — Node reference verifier refuses every case
+        run: node tests/run_conformance_cases.mjs
+      - name: Adversarial corpus — browser build refuses every case
+        run: node tests/run_conformance_cases.mjs --browser
