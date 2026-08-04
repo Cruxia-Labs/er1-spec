@@ -197,7 +197,19 @@ case("base64_padded_junk",
      False, "signature",
      "Node, CPython and WebCrypto accepted three different sets of malformed base64.")
 
-# ── 12. the positive control: a well-formed receipt must still recompute ──
+# ── 12. the third gauntlet (2026-08-04): parse-path and API-shape divergences ──
+case("null_document", None, False, "malformed",
+     "Both JS verifiers threw an uncaught TypeError on JSON null instead of returning a "
+     "verdict; Python returned FAILED. A crash is not a verdict.")
+case("compatible_release_single_component",
+     receipt(action={"tool": "pip", "asserts": {"dep:x": "9.0"}, "resource": "req.txt"},
+             action_binding={"tool": "pip", "args_hash": SHA0, "resource": "req.txt"},
+             beliefs=[belief(entity="dep:x", rule="satisfies", value="~=2")]),
+     False, "malformed",
+     "`~=2` has no upper bound to enforce — it degenerated into >=2, so the pin never gated. "
+     "PEP 440 requires at least two components.")
+
+# ── 13. the positive control: a well-formed receipt must still recompute ──
 case("well_formed_halt_recomputes",
      receipt(beliefs=[belief()],
              decision={"verdict": "HALT", "reason_code": "BANNED_ENTITY",

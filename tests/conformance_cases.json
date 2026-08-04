@@ -2362,6 +2362,67 @@
    "error_contains": "signature"
   },
   {
+   "name": "null_document",
+   "why": "Both JS verifiers threw an uncaught TypeError on JSON null instead of returning a verdict; Python returned FAILED. A crash is not a verdict.",
+   "doc": null,
+   "expect_ok": false,
+   "error_contains": "malformed"
+  },
+  {
+   "name": "compatible_release_single_component",
+   "why": "`~=2` has no upper bound to enforce — it degenerated into >=2, so the pin never gated. PEP 440 requires at least two components.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "9.0"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": "~=2",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": []
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "malformed"
+  },
+  {
    "name": "well_formed_halt_recomputes",
    "why": "Control: unsigned, so it must fail on the SIGNATURE only — proving the corpus's other cases fail for their own stated reason and the predicate still works.",
    "doc": {

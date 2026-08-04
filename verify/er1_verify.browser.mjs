@@ -274,7 +274,11 @@ function verCmp(pa, pb) {
 }
 function compatible(proposed, constraint) {
   if (verCmp(proposed, constraint) < 0) return false;
-  if (constraint.length < 2) return true;
+  if (constraint.length < 2) {
+    // PEP 440: ~=2 is not a valid compatible-release clause — it would degenerate into an
+    // unbounded >=2 and the pin would never gate anything.
+    throw new Er1MalformedReceipt("~= needs at least two version components");
+  }
   const prefix = constraint.slice(0, -1);
   for (let i = 0; i < prefix.length; i++) if ((proposed[i] ?? 0) !== prefix[i]) return false;
   return true;
@@ -336,6 +340,9 @@ const SMALL_ORDER = new Set([
   "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
 ]);
 
+const b64Key = (s) => b64urlToBytes(s, 32);
+const toHexKey = (buf) => toHex(buf);
+
 async function verifySignature(r) {
   const sb = r.signature;
   if (!isPlainObject(sb) || sb.algorithm !== "ed25519") return false;
@@ -374,7 +381,7 @@ export async function verify(r, trustedKeys = null) {
   }
 
   // The signature is checked FIRST and unconditionally — see er1_verify.py::verify.
-  checks.signature = await verifySignature(r);
+  checks.signature = isPlainObject(r) ? await verifySignature(r) : false;
   if (!checks.signature) errors.push("signature: invalid or missing");
 
   try {
@@ -385,7 +392,13 @@ export async function verify(r, trustedKeys = null) {
   }
 
   if (trustedKeys !== null) {
-    checks.trusted_signer = trustedKeys.has(signer);
+    // Compare the 32 key BYTES, not the base64 text: the same key has several valid
+    // spellings, and pinning must not be defeated by re-spelling it.
+    let signerHex = null;
+    try { signerHex = toHexKey(b64Key(signer)); } catch { signerHex = null; }
+    const pinnedHex = new Set();
+    for (const k of trustedKeys) { try { pinnedHex.add(toHexKey(b64Key(k))); } catch { /* skip */ } }
+    checks.trusted_signer = signerHex !== null && pinnedHex.has(signerHex);
     if (!checks.trusted_signer) errors.push(`signer not in pinned key set: ${JSON.stringify(signer)}`);
   }
 
@@ -433,6 +446,111 @@ export async function verify(r, trustedKeys = null) {
   }
 }
 
+// ── the one parse path ──
+//
+// Every rule that makes a document's reading unambiguous lives here, and it is shared with the
+// browser build. JSON.parse cannot help with duplicate keys — by the time a reviver runs, the
+// parser has already kept the last one — so the text is scanned directly. The previous
+// implementation tried to do this with a reviver and was dead code: it tested a Set that was
+// never written to, so Node verified documents Python refused.
+
+function scanJsonForDuplicateKeys(text) {
+  let i = 0;
+  const n = text.length;
+
+  const readString = () => {                       // assumes text[i] === '"'
+    let out = "";
+    i++;
+    while (i < n) {
+      const c = text[i];
+      if (c === "\\") {
+        const e = text[i + 1];
+        if (e === "u") {
+          out += String.fromCharCode(parseInt(text.substr(i + 2, 4), 16));
+          i += 6;
+        } else {
+          out += { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" }[e] ?? e;
+          i += 2;
+        }
+      } else if (c === '"') {
+        i++;
+        return out;
+      } else {
+        out += c;
+        i++;
+      }
+    }
+    throw new Er1MalformedReceipt("unterminated string in document");
+  };
+
+  // A real container stack — an earlier version guessed with lastIndexOf and never fired.
+  const stack = [];                                 // {isObject, seen} per open container
+  let expectKey = false;
+  while (i < n) {
+    const c = text[i];
+    if (c === '"') {
+      const str = readString();
+      if (expectKey) {
+        const top = stack[stack.length - 1];
+        if (top && top.seen.has(str)) {
+          throw new Er1MalformedReceipt(`duplicate object key in the document text: '${str}'`);
+        }
+        if (top) top.seen.add(str);
+        expectKey = false;
+      }
+      continue;
+    }
+    if (c === "{") { stack.push({ isObject: true, seen: new Set() }); expectKey = true; }
+    else if (c === "[") { stack.push({ isObject: false, seen: new Set() }); expectKey = false; }
+    else if (c === "}" || c === "]") { stack.pop(); expectKey = false; }
+    else if (c === ",") {
+      const top = stack[stack.length - 1];
+      expectKey = Boolean(top && top.isObject);
+    }
+    i++;
+  }
+}
+
+// Unpaired surrogates have no UTF-8 form, so they have no canonical byte form either. Checked in
+// object KEYS as well as string values — the first version inspected only values, and a receipt
+// with a surrogate in a key verified in Node while Python refused to load it.
+function rejectLoneSurrogates(v) {
+  if (typeof v === "string") {
+    for (let i = 0; i < v.length; i++) {
+      const c = v.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff) {
+        const next = v.charCodeAt(i + 1);
+        if (!(next >= 0xdc00 && next <= 0xdfff)) {
+          throw new Er1MalformedReceipt("string contains an unpaired surrogate");
+        }
+        i++;
+      } else if (c >= 0xdc00 && c <= 0xdfff) {
+        throw new Er1MalformedReceipt("string contains an unpaired surrogate");
+      }
+    }
+  } else if (Array.isArray(v)) {
+    for (const x of v) rejectLoneSurrogates(x);
+  } else if (isPlainObject(v)) {
+    for (const k of Object.keys(v)) {
+      rejectLoneSurrogates(k);
+      rejectLoneSurrogates(v[k]);
+    }
+  }
+}
+
+export function loadDocument(text) {
+  scanJsonForDuplicateKeys(text);
+  const doc = JSON.parse(text);
+  rejectLoneSurrogates(doc);
+  if (!isPlainObject(doc)) {
+    throw new Er1MalformedReceipt("top-level JSON must be an object");
+  }
+  return doc;
+}
+
 export async function verifyJson(text, trustedKeys = null) {
-  return verify(JSON.parse(text), trustedKeys);
+  // Routed through loadDocument, not bare JSON.parse: this is the paste/drop path in
+  // verify/index.html, and it previously VERIFIED documents both CLIs refuse to load —
+  // duplicate keys, unpaired surrogates, non-object top levels.
+  return verify(loadDocument(text), trustedKeys);
 }

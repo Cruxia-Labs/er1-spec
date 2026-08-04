@@ -26,17 +26,26 @@ attack in which a receipt no one should trust printed VERIFIED:
   permissible. Previously such receipts skipped the constraint and verified as ALLOW, so a
   single character ("ACTIVE" for "active") silently disarmed a gate.
 
-  IDENTITY IS NORMALIZED. Entity names and assert keys are compared after NFC normalization,
-  because canonical JSON normalizes them too. Otherwise the same bytes could carry two
-  different identities — a banned entity spelled in NFD evaded the predicate while producing
-  byte-identical signed input, which broke the property the whole receipt rests on: that the
-  signed bytes determine the verdict.
+  IDENTITY IS ASCII, AND NOTHING IS NORMALIZED. NFC is bound to the runtime's Unicode version
+  (CPython 3.12 ships 15.0, Node 24 ships 16.0, and 20 code points compose in one and not the
+  other), so normalizing inside the canonical form made the SIGNED BYTES depend on which
+  interpreter you ran — one verifier let a decomposed spelling past an excludes gate while
+  another halted on the same file. The canonical form therefore does not normalize at all,
+  which is also what RFC 8785 does. Identity stays unambiguous by a different route: the names
+  used to LOOK A CONSTRAINT UP (belief.entity, the keys of action.asserts, belief_id) must be
+  printable ASCII, where normalization is the identity function in every Unicode version. Free
+  text — values, tool, resource — is unrestricted and compared with exact code-point equality.
 
   ONE NUMBER GRAMMAR. Canonical JSON accepts only integers that are exactly representable in
   both IEEE-754 doubles and Python ints (|n| <= 2**53 - 1). Floats and larger integers are
   rejected rather than serialized, because no number grammar exists that Python and
   ECMAScript both emit identically — 1e21, 1e16, 1e-6 and every integer above 2**53 differed,
   which let a tampered body keep a colliding hash in one language and not the other.
+
+  ONE READING PER DOCUMENT. Duplicate keys, unpaired surrogates and non-object top levels are
+  refused at the parse boundary, before anything reads the document — a file has exactly one
+  reading or none. JSON parsers silently keep the last of a duplicated key, which let
+  contradictory decoy content ride inside a signed file that still verified.
 
   A RECEIPT IS NOT A BUNDLE. A document that looks like both is ambiguous and is rejected.
   Previously an unsigned top-level `receipts` array decided what got verified, so a forged
@@ -68,11 +77,11 @@ class Er1MalformedReceipt(ValueError):
 
 # ── canonical JSON — vendored verbatim from the spec ──
 #
-# RFC 8785-INSPIRED, with three PINNED deviations you must match to interoperate (all
-# documented in CONFORMANCE.md): every non-ASCII character is escaped as \\uXXXX rather than
-# emitted literally; all strings — including object keys, which are normalized BEFORE they are
-# ordered — are NFC-normalized; and the number grammar is restricted to exactly-representable
-# integers. A port that follows RFC 8785 literally will not reproduce our hashes.
+# RFC 8785 with two PINNED deviations you must match to interoperate (both documented in
+# CONFORMANCE.md): every non-ASCII character is escaped as \\uXXXX rather than emitted
+# literally, and the number grammar is restricted to exactly-representable integers. Strings
+# are NOT normalized — that deviation was removed on 2026-08-04 because it made the canonical
+# bytes depend on the runtime's Unicode version.
 
 def _utf16_key(s: str):
     out = []
@@ -380,7 +389,9 @@ def _compatible(proposed, constraint):
     if _ver_cmp(proposed, constraint) < 0:
         return False
     if len(constraint) < 2:
-        return True
+        # PEP 440: ~=2 is not a valid compatible-release clause — it would degenerate into an
+        # unbounded >=2 and the pin would never gate anything.
+        raise Er1MalformedReceipt("~= needs at least two version components")
     prefix = constraint[:-1]
     pv = proposed + (0,) * (len(prefix) - len(proposed))
     return pv[:len(prefix)] == prefix
@@ -534,7 +545,19 @@ def verify(receipt: Any, trusted_keys: Optional[set] = None) -> dict:
                 "errors": errs + [f"malformed receipt: {exc}"], "signer": signer}
 
     if trusted_keys is not None:
-        checks["trusted_signer"] = signer in trusted_keys
+        # Compare the 32 key BYTES, not the base64 text: the same key has several valid
+        # spellings (padding, +/- vs -/_), and pinning must not be defeated by re-spelling it.
+        try:
+            signer_bytes = _b64d(signer, 32) if isinstance(signer, str) else None
+        except Er1MalformedReceipt:
+            signer_bytes = None
+        pinned_bytes = set()
+        for k in trusted_keys:
+            try:
+                pinned_bytes.add(_b64d(k, 32))
+            except (Er1MalformedReceipt, TypeError):
+                pass
+        checks["trusted_signer"] = signer_bytes is not None and signer_bytes in pinned_bytes
         if not checks["trusted_signer"]:
             errs.append(f"signer not in pinned key set: {signer!r}")
 
@@ -725,12 +748,14 @@ def main(argv=None) -> int:
                 for e in res["errors"]:
                     print(f"    ! {e}")
                 all_ok = all_ok and res["ok"]
-    except BrokenPipeError:                    # e.g. `er1-verify … | head`
+    except BrokenPipeError:
+        # `er1-verify … | head` closes stdout early. Exiting 0 here would report success for
+        # receipts that were never checked, so an interrupted run is always a failure.
         try:
             sys.stdout.close()
         except BrokenPipeError:
             pass
-        return 0 if all_ok else 1
+        return 1
 
     if checked == 0 and all_ok:
         # An empty bundle must never pass a CI gate by saying nothing.
