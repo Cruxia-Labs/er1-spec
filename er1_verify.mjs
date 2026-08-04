@@ -55,8 +55,16 @@ function canon(v) {
   if (typeof v === "string") return escapeString(v);
   if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
   if (typeof v === "object") {
-    const keys = Object.keys(v).sort(); // default UTF-16 code-unit order == python _utf16_key
-    return "{" + keys.map((k) => escapeString(k) + ":" + canon(v[k])).join(",") + "}";
+    // NFC BEFORE ordering — see the note in er1_verify.py::_canon. Sorting raw
+    // keys and normalizing at emit time can mis-order and can emit duplicates.
+    const norm = new Map();
+    for (const k of Object.keys(v)) {
+      const nk = k.normalize("NFC");
+      if (norm.has(nk)) throw new Error("duplicate object key after NFC normalization: " + nk);
+      norm.set(nk, v[k]);
+    }
+    const keys = [...norm.keys()].sort(); // default UTF-16 code-unit order == python _utf16_key
+    return "{" + keys.map((k) => escapeString(k) + ":" + canon(norm.get(k))).join(",") + "}";
   }
   throw new TypeError("cannot canonicalize " + typeof v);
 }

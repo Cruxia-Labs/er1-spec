@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import binascii
 import json
 import math
 import sys
@@ -114,8 +115,19 @@ def _canon(v: Any) -> str:
     if isinstance(v, str):
         return _escape(v)
     if isinstance(v, dict):
-        keys = sorted(v.keys(), key=_utf16_key)
-        return "{" + ",".join(_escape(k) + ":" + _canon(v[k]) for k in keys) + "}"
+        # NFC BEFORE ordering. The canonical form is defined over normalized
+        # strings, so an independent port that normalizes-then-sorts (the
+        # natural reading of CONFORMANCE.md) must land on our exact bytes.
+        # Sorting raw keys and normalizing at emit time can both mis-order
+        # (é vs é) and silently emit a duplicate key.
+        norm = {}
+        for k in v.keys():
+            nk = unicodedata.normalize("NFC", k)
+            if nk in norm:
+                raise ValueError(f"duplicate object key after NFC normalization: {nk!r}")
+            norm[nk] = v[k]
+        keys = sorted(norm.keys(), key=_utf16_key)
+        return "{" + ",".join(_escape(k) + ":" + _canon(norm[k]) for k in keys) + "}"
     if isinstance(v, (list, tuple)):
         return "[" + ",".join(_canon(x) for x in v) + "]"
     raise TypeError(f"cannot canonicalize {type(v)}")
@@ -179,12 +191,29 @@ def _satisfies(proposed, constraint):
     return _ver_cmp(proposed, c) == 0
 
 
+class Er1MalformedReceipt(ValueError):
+    """A receipt is structurally unusable. Never silently ALLOW — the caller
+    turns this into FAILED, which is the only safe verdict for input we cannot
+    evaluate."""
+
+
 def _conflict(beliefs, asserts):
     """Return (belief_id, reason_code) of the first conflict, or None."""
+    if not isinstance(beliefs, list):
+        raise Er1MalformedReceipt("beliefs is not a list")
+    if not isinstance(asserts, dict):
+        raise Er1MalformedReceipt("action.asserts is not an object")
     for b in beliefs:
+        if not isinstance(b, dict):
+            raise Er1MalformedReceipt("belief entry is not an object")
         if b.get("status", "active") != "active" or b.get("source_kind") != "deterministic":
             continue
-        ent, rule, val = b["entity"], b["rule"], b["value"]
+        try:
+            ent, rule, val = b["entity"], b["rule"], b["value"]
+        except KeyError as exc:
+            # An active deterministic belief missing its predicate fields cannot
+            # be evaluated. Skipping would silently weaken the gate, so fail.
+            raise Er1MalformedReceipt(f"belief missing required field: {exc}") from None
         if rule == "excludes":
             if ent in asserts:
                 return b["belief_id"], "BANNED_ENTITY"
@@ -213,7 +242,7 @@ def verify_signature(receipt: dict) -> bool:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     from cryptography.exceptions import InvalidSignature
     sb = receipt.get("signature")
-    if not sb or sb.get("algorithm") != "ed25519":
+    if not isinstance(sb, dict) or sb.get("algorithm") != "ed25519":
         return False
 
     def _d(s):
@@ -227,73 +256,164 @@ def verify_signature(receipt: dict) -> bool:
         digest = hashlib.sha256(canonical_json(_body(receipt))).digest()
         Ed25519PublicKey.from_public_bytes(_d(sb["public_key"])).verify(_d(sb["signature"]), digest)
         return True
-    except (InvalidSignature, KeyError, ValueError):
+    except (InvalidSignature, KeyError, ValueError, TypeError, binascii.Error):
+        # Adversarial receipts are the expected input: wrong types, bad base64,
+        # non-canonicalizable bodies. Every one of them is FAILED, never a crash.
         return False
 
 
-def verify(receipt: dict) -> dict:
+def verify(receipt: dict, trusted_keys: Optional[set] = None) -> dict:
+    """Verify one receipt. `trusted_keys` optionally pins the acceptable signer
+    public keys; without it a receipt still verifies against the key it carries
+    (see SCOPE_OF_CERTIFICATION.md), and the CLI prints that key so the relying
+    party can pin it themselves."""
     errs = []
     checks = {}
+
+    if not isinstance(receipt, dict):
+        return {"ok": False, "recomputed_verdict": None, "checks": {},
+                "errors": ["receipt is not a JSON object"], "signer": None}
+
+    signer = None
+    sb = receipt.get("signature")
+    if isinstance(sb, dict):
+        pk = sb.get("public_key")
+        signer = pk if isinstance(pk, str) else None
 
     checks["signature"] = verify_signature(receipt)
     if not checks["signature"]:
         errs.append("signature: invalid or missing")
 
-    action = receipt.get("action", {})
-    expect = _sha256_hex(canonical_json(
-        {"tool": action.get("tool", ""), "asserts": action.get("asserts", {}),
-         "resource": action.get("resource", "")}))
-    checks["binding"] = receipt.get("action_binding", {}).get("args_hash") == expect
-    if not checks["binding"]:
-        errs.append("action_binding: args_hash mismatch")
+    if trusted_keys is not None:
+        checks["trusted_signer"] = signer in trusted_keys
+        if not checks["trusted_signer"]:
+            errs.append(f"signer not in pinned key set: {signer!r}")
 
-    beliefs = receipt.get("beliefs", [])
-    checks["state_root"] = receipt.get("pre_state_root") == _sha256_hex(canonical_json(beliefs))
-    if not checks["state_root"]:
-        errs.append("pre_state_root mismatch")
+    try:
+        action = receipt.get("action") or {}
+        if not isinstance(action, dict):
+            raise Er1MalformedReceipt("action is not an object")
+        asserts = action.get("asserts") or {}
+        expect = _sha256_hex(canonical_json(
+            {"tool": action.get("tool", ""), "asserts": asserts,
+             "resource": action.get("resource", "")}))
+        binding = receipt.get("action_binding") or {}
+        checks["binding"] = isinstance(binding, dict) and binding.get("args_hash") == expect
+        if not checks["binding"]:
+            errs.append("action_binding: args_hash mismatch")
 
-    c = _conflict(beliefs, action.get("asserts", {}))
-    recomputed = "HALT" if c is not None else "ALLOW"
-    recorded = receipt.get("decision", {})
-    checks["verdict"] = recomputed == recorded.get("verdict")
-    if not checks["verdict"]:
-        errs.append(f"verdict: recomputed {recomputed} vs recorded {recorded.get('verdict')!r}")
-    if c is not None:
-        if recorded.get("conflicting_belief_id") != c[0]:
-            errs.append("verdict: conflicting_belief_id mismatch")
-        if recorded.get("reason_code") != c[1]:
-            errs.append("verdict: reason_code mismatch")
+        beliefs = receipt.get("beliefs") or []
+        checks["state_root"] = receipt.get("pre_state_root") == _sha256_hex(canonical_json(beliefs))
+        if not checks["state_root"]:
+            errs.append("pre_state_root mismatch")
 
-    return {"ok": not errs, "recomputed_verdict": recomputed, "checks": checks, "errors": errs}
+        c = _conflict(beliefs, asserts)
+        recomputed = "HALT" if c is not None else "ALLOW"
+        recorded = receipt.get("decision") or {}
+        if not isinstance(recorded, dict):
+            raise Er1MalformedReceipt("decision is not an object")
+        checks["verdict"] = recomputed == recorded.get("verdict")
+        if not checks["verdict"]:
+            errs.append(f"verdict: recomputed {recomputed} vs recorded {recorded.get('verdict')!r}")
+        if c is not None:
+            if recorded.get("conflicting_belief_id") != c[0]:
+                errs.append("verdict: conflicting_belief_id mismatch")
+            if recorded.get("reason_code") != c[1]:
+                errs.append("verdict: reason_code mismatch")
+    except (Er1MalformedReceipt, ValueError, TypeError, AttributeError) as exc:
+        # Structurally broken input is FAILED, never ALLOW and never a crash.
+        return {"ok": False, "recomputed_verdict": None, "checks": checks,
+                "errors": errs + [f"malformed receipt: {exc}"], "signer": signer}
+
+    return {"ok": not errs, "recomputed_verdict": recomputed, "checks": checks,
+            "errors": errs, "signer": signer}
 
 
 def _receipts_from(doc: Any, label: str) -> list:
     """A golden_vectors bundle wraps each receipt as {name, receipt, ...}; a bare receipt has a
     top-level `decision`. Yields (label, receipt) pairs so the CLI handles both."""
     if isinstance(doc, dict) and isinstance(doc.get("receipts"), list):
-        return [(f"{label}:{w.get('name')}", w["receipt"]) for w in doc["receipts"]]
+        out = []
+        for i, w in enumerate(doc["receipts"]):
+            if isinstance(w, dict) and isinstance(w.get("receipt"), dict):
+                out.append((f"{label}:{w.get('name')}", w["receipt"]))
+            else:
+                out.append((f"{label}:entry[{i}]", None))   # malformed → FAILED, not a crash
+        return out
     return [(label, doc)]
 
 
+USAGE = ("usage: er1-verify [--pubkey KEY]... <receipt.json | golden_vectors.json> [...]\n"
+         "  --pubkey KEY   pin a trusted signer (repeatable). Without it, a receipt is\n"
+         "                 verified against the key it carries — see SCOPE_OF_CERTIFICATION.md.")
+
+
 def main(argv=None) -> int:
-    argv = argv if argv is not None else sys.argv[1:]
-    if not argv:
-        print("usage: er1-verify <receipt.json | golden_vectors.json> [...]   "
-              "(or: python er1_verify.py <file.json>)", file=sys.stderr)
+    argv = list(argv if argv is not None else sys.argv[1:])
+    pinned = set()
+    paths = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--pubkey":
+            if i + 1 >= len(argv):
+                print("error: --pubkey needs a value\n" + USAGE, file=sys.stderr)
+                return 2
+            pinned.add(argv[i + 1])
+            i += 2
+            continue
+        if a in ("-h", "--help"):
+            print(USAGE)
+            return 0
+        paths.append(a)
+        i += 1
+
+    if not paths:
+        print(USAGE, file=sys.stderr)
         return 2
+
+    trusted = pinned or None
     all_ok = True
-    for path in argv:
-        with open(path, encoding="utf-8") as f:
-            doc = json.load(f)
+    checked = 0
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8") as f:
+                doc = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"FAILED ✗  {path}  [could not load: {exc}]")
+            all_ok = False
+            continue
         for label, receipt in _receipts_from(doc, path):
-            res = verify(receipt)
-            d = receipt.get("decision", {})
+            checked += 1
+            if receipt is None:
+                print(f"FAILED ✗  {label}  [malformed bundle entry: no receipt object]")
+                all_ok = False
+                continue
+            res = verify(receipt, trusted)
+            d = receipt.get("decision") if isinstance(receipt.get("decision"), dict) else {}
             status = "VERIFIED ✓" if res["ok"] else "FAILED ✗"
+            try:
+                short = receipt_hash(receipt)[:18] + "…"
+            except (ValueError, TypeError):
+                short = "<uncanonicalizable>"
+            signer = res.get("signer")
+            # The signer is always shown: this verifier proves a receipt is
+            # internally consistent and signed by the key it names — not that
+            # the key belongs to anyone you trust. Pin with --pubkey.
+            sig_note = f"signer={signer[:12]}…" if isinstance(signer, str) and len(signer) > 12 \
+                else f"signer={signer}"
+            if trusted is None and isinstance(signer, str):
+                sig_note += " (unpinned)"
             print(f"{status}  {label}  verdict={d.get('verdict')} "
-                  f"(recomputed {res['recomputed_verdict']})  hash={receipt_hash(receipt)[:18]}…")
+                  f"(recomputed {res['recomputed_verdict']})  hash={short}  {sig_note}")
             for e in res["errors"]:
                 print(f"    ! {e}")
             all_ok = all_ok and res["ok"]
+
+    if checked == 0 and all_ok:
+        # An empty bundle must never pass a CI gate by saying nothing.
+        print("FAILED ✗  no receipts found in input", file=sys.stderr)
+        return 1
     return 0 if all_ok else 1
 
 
