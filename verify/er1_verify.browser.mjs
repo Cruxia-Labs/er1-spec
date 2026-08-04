@@ -217,8 +217,13 @@ export async function verify(r) {
   const a = r.action ?? {};
   const expect = await sha256Hex(canonicalBytes(
     { tool: a.tool ?? "", asserts: a.asserts ?? {}, resource: a.resource ?? "" }));
-  checks.binding = (r.action_binding ?? {}).args_hash === expect;
+  const binding = r.action_binding ?? {};
+  checks.binding = binding.args_hash === expect;
   if (!checks.binding) errors.push("action_binding: args_hash mismatch");
+  // The binding names the request it binds to; a mismatch is a self-contradicting
+  // receipt (the signature covers both). Mirrors er1_verify.py.
+  if (binding.tool !== a.tool) errors.push("action_binding: tool does not mirror action.tool");
+  if (binding.resource !== a.resource) errors.push("action_binding: resource does not mirror action.resource");
 
   const beliefs = r.beliefs ?? [];
   checks.state_root = r.pre_state_root === await sha256Hex(canonicalBytes(beliefs));
@@ -232,6 +237,17 @@ export async function verify(r) {
   if (c !== null) {
     if (recorded.conflicting_belief_id !== c[0]) errors.push("verdict: conflicting_belief_id mismatch");
     if (recorded.reason_code !== c[1]) errors.push("verdict: reason_code mismatch");
+  }
+
+  // er1.schema.json: post_state_root equals pre_state_root on ALLOW, null on
+  // HALT (the action did not take effect). Mirrors er1_verify.py.
+  const post = r.post_state_root ?? null;
+  if (recomputed === "HALT") {
+    checks.post_state_root = post === null;
+    if (!checks.post_state_root) errors.push("post_state_root: must be null on HALT");
+  } else {
+    checks.post_state_root = post === r.pre_state_root;
+    if (!checks.post_state_root) errors.push("post_state_root: must equal pre_state_root on ALLOW");
   }
 
   return { ok: errors.length === 0, recomputedVerdict: recomputed, checks, errors };

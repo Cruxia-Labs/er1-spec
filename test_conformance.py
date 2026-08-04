@@ -119,6 +119,35 @@ def test_pubkey_pinning_rejects_a_self_signed_receipt():
     assert ER1.verify(receipt, {real})["ok"] is True               # pinned correctly: verifies
 
 
+def test_post_state_root_rule_is_enforced():
+    # er1.schema.json states it; before 2026-08-03 nothing checked it, so an
+    # ALLOW receipt could record no resulting state and still verify.
+    allow = copy.deepcopy(
+        [w for w in GOLDEN["receipts"] if w["receipt"]["decision"]["verdict"] == "ALLOW"][0]["receipt"])
+    allow["post_state_root"] = None
+    res = ER1.verify(allow)
+    assert res["ok"] is False and any("post_state_root" in e for e in res["errors"])
+
+    halt = copy.deepcopy(
+        [w for w in GOLDEN["receipts"] if w["receipt"]["decision"]["verdict"] == "HALT"][0]["receipt"])
+    halt["post_state_root"] = halt["pre_state_root"]      # HALT must not record a resulting state
+    res = ER1.verify(halt)
+    assert res["ok"] is False and any("post_state_root" in e for e in res["errors"])
+
+
+def test_action_binding_must_mirror_the_action():
+    r = copy.deepcopy(GOLDEN["receipts"][0]["receipt"])
+    r["action_binding"]["tool"] = "some_other_tool"
+    res = ER1.verify(r)
+    assert res["ok"] is False and any("does not mirror" in e for e in res["errors"])
+
+
+def test_bom_prefixed_input_is_tolerated(tmp_path):
+    p = tmp_path / "bom.json"
+    p.write_text("﻿" + json.dumps(GOLDEN), encoding="utf-8")
+    assert ER1.main([str(p)]) == 0
+
+
 if __name__ == "__main__":
     test_every_golden_receipt_verifies()
     test_signatures_use_the_pinned_key()

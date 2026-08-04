@@ -34,7 +34,13 @@ import sys
 import unicodedata
 from typing import Any, Optional
 
-# ── canonical JSON (RFC 8785–compatible) — vendored verbatim from the spec ──
+# ── canonical JSON — vendored verbatim from the spec ──
+#
+# RFC 8785-INSPIRED, with two PINNED deviations you must match to interoperate
+# (both documented in CONFORMANCE.md): every non-ASCII character is escaped as
+# \uXXXX rather than emitted literally, and all strings — including object keys,
+# which are normalized BEFORE they are ordered — are NFC-normalized. A port that
+# follows RFC 8785 literally will not reproduce our hashes.
 
 def _utf16_key(s: str):
     out = []
@@ -301,6 +307,14 @@ def verify(receipt: dict, trusted_keys: Optional[set] = None) -> dict:
         checks["binding"] = isinstance(binding, dict) and binding.get("args_hash") == expect
         if not checks["binding"]:
             errs.append("action_binding: args_hash mismatch")
+        # The binding names the request it binds to. If it names a different
+        # tool or resource than the action, the receipt contradicts itself —
+        # the signature covers both, so this can only be a producer defect.
+        if isinstance(binding, dict):
+            if binding.get("tool") != action.get("tool"):
+                errs.append("action_binding: tool does not mirror action.tool")
+            if binding.get("resource") != action.get("resource"):
+                errs.append("action_binding: resource does not mirror action.resource")
 
         beliefs = receipt.get("beliefs") or []
         checks["state_root"] = receipt.get("pre_state_root") == _sha256_hex(canonical_json(beliefs))
@@ -320,6 +334,19 @@ def verify(receipt: dict, trusted_keys: Optional[set] = None) -> dict:
                 errs.append("verdict: conflicting_belief_id mismatch")
             if recorded.get("reason_code") != c[1]:
                 errs.append("verdict: reason_code mismatch")
+
+        # er1.schema.json: post_state_root equals pre_state_root on ALLOW and is
+        # null on HALT (the action did not take effect). Unenforced, a receipt
+        # could claim ALLOW while recording no resulting state.
+        post = receipt.get("post_state_root")
+        if recomputed == "HALT":
+            checks["post_state_root"] = post is None
+            if not checks["post_state_root"]:
+                errs.append("post_state_root: must be null on HALT")
+        else:
+            checks["post_state_root"] = post == receipt.get("pre_state_root")
+            if not checks["post_state_root"]:
+                errs.append("post_state_root: must equal pre_state_root on ALLOW")
     except (Er1MalformedReceipt, ValueError, TypeError, AttributeError) as exc:
         # Structurally broken input is FAILED, never ALLOW and never a crash.
         return {"ok": False, "recomputed_verdict": None, "checks": checks,
@@ -377,7 +404,8 @@ def main(argv=None) -> int:
     checked = 0
     for path in paths:
         try:
-            with open(path, encoding="utf-8") as f:
+            # utf-8-sig: tolerate a BOM some producers add inadvertently.
+            with open(path, encoding="utf-8-sig") as f:
                 doc = json.load(f)
         except (OSError, json.JSONDecodeError) as exc:
             print(f"FAILED ✗  {path}  [could not load: {exc}]")
