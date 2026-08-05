@@ -729,7 +729,7 @@ def main(argv=None) -> int:
             pinned.add(argv[i + 1])
             i += 2
             continue
-        if a in ("-h", "--help"):
+        if a in ("-h", "--help") and i == 0:
             print(USAGE)
             return 0
         paths.append(a)
@@ -751,16 +751,20 @@ def main(argv=None) -> int:
                 st = os.stat(path)
                 if not stat.S_ISREG(st.st_mode):
                     raise Er1MalformedReceipt("not a regular file")
-                # utf-8-sig: tolerate a BOM some producers add inadvertently. Invalid UTF-8 is
-                # a load failure, not something to paper over — the two JS verifiers hashed a
-                # replacement character and reported VERIFIED on bytes Python could not read.
-                with open(path, encoding="utf-8-sig") as f:
-                    text = f.read(MAX_BYTES + 1)
-                if len(text) > MAX_BYTES:
+                # Read BYTES and measure BYTES. Reading through a text handle and taking
+                # len() counted CHARACTERS, so the same 8 MiB limit admitted a 10 MB file of
+                # two-byte characters here and refused it in Node — one signed receipt, two
+                # verdicts, from a bound that only looked shared.
+                with open(path, "rb") as f:
+                    raw = f.read(MAX_BYTES + 1)
+                if len(raw) > MAX_BYTES:
                     raise Er1MalformedReceipt(
                         f"input exceeds {MAX_BYTES} bytes — a receipt is a constraint "
                         f"snapshot, not a payload")
-                doc = load_document(text)
+                # utf-8-sig strips exactly ONE leading BOM. Invalid UTF-8 is a load failure,
+                # not something to paper over — the JS verifiers once hashed a replacement
+                # character and reported VERIFIED on bytes Python could not read.
+                doc = load_document(raw.decode("utf-8-sig"))
             except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError,
                     RecursionError) as exc:
                 print(f"FAILED ✗  {path}  [could not load: {exc}]")

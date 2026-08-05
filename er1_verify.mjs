@@ -577,7 +577,7 @@ function main(argv) {
       pinned.add(argv[++i]);
       continue;
     }
-    if ((argv[i] === "-h" || argv[i] === "--help") && paths.length === 0) {
+    if ((argv[i] === "-h" || argv[i] === "--help") && i === 0) {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -606,7 +606,7 @@ function main(argv) {
         throw new Er1MalformedReceipt(
           `input exceeds ${MAX_BYTES} bytes — a receipt is a constraint snapshot, not a payload`);
       }
-      doc = loadDocument(new TextDecoder("utf-8", { fatal: true }).decode(raw).replace(/^\ufeff/, ""));
+      doc = loadDocument(new TextDecoder("utf-8", { fatal: true }).decode(raw));
     } catch (exc) {
       process.stdout.write(`FAILED ✗  ${path}  [could not load: ${exc.message}]\n`);
       allOk = false;
