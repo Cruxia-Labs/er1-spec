@@ -155,6 +155,10 @@ function b64urlToBytes(s, expectLen) {
   if (out.length !== expectLen) {
     throw new Er1MalformedReceipt(`signature field must decode to ${expectLen} bytes`);
   }
+  // Pin one canonical spelling — the last character's unused trailing bits are otherwise
+  // free, so many byte-distinct spellings decode identically.
+  let reenc = btoa(String.fromCharCode(...out)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  if (reenc !== s) throw new Er1MalformedReceipt("signature field is not canonical base64url");
   return out;
 }
 
@@ -454,7 +458,8 @@ export async function verify(r, trustedKeys = null) {
 // implementation tried to do this with a reviver and was dead code: it tested a Set that was
 // never written to, so Node verified documents Python refused.
 
-function scanJsonForDuplicateKeys(text) {
+function scanJsonForDuplicateKeys(text, collect = false) {
+  const allKeys = [];
   let i = 0;
   const n = text.length;
 
@@ -496,6 +501,7 @@ function scanJsonForDuplicateKeys(text) {
           throw new Er1MalformedReceipt(`duplicate object key in the document text: '${str}'`);
         }
         if (top) top.seen.add(str);
+        if (collect) allKeys.push(str);
         expectKey = false;
       }
       continue;
@@ -509,6 +515,23 @@ function scanJsonForDuplicateKeys(text) {
     }
     i++;
   }
+  return allKeys;
+}
+
+// Every key the TEXT contains, in document order. Used to cross-check the parser: see
+// loadDocument. Collected by the same scan that finds duplicates, so it costs nothing extra.
+function scanJsonKeys(text) {
+  return scanJsonForDuplicateKeys(text, true);
+}
+
+// Every key the PARSED object contains. Compared against the text reading — if a parser
+// disagrees with the document about what its own keys are, the document has no single reading.
+function parsedKeys(v, out = []) {
+  if (Array.isArray(v)) { for (const x of v) parsedKeys(x, out); return out; }
+  if (v && typeof v === "object") {
+    for (const k of Object.keys(v)) { out.push(k); parsedKeys(v[k], out); }
+  }
+  return out;
 }
 
 // Unpaired surrogates have no UTF-8 form, so they have no canonical byte form either. Checked in
@@ -539,8 +562,20 @@ function rejectLoneSurrogates(v) {
 }
 
 export function loadDocument(text) {
-  scanJsonForDuplicateKeys(text);
+  const textKeys = scanJsonKeys(text);
   const doc = JSON.parse(text);
+  // The parser is not trusted to read the document correctly. Node 24's JSON.parse can
+  // misread an escaped object key ("\\u00e9" -> "\\") once the same process has parsed an
+  // object containing a backslash-escaped key, so what a file MEANS depends on what was
+  // parsed before it — and a signature computed over that misreading verified in Node while
+  // Python refused the same bytes. Comparing the parser's keys against the ones the document
+  // text actually contains closes the class without depending on any parser being correct.
+  const seen = parsedKeys(doc).slice().sort();
+  const want = textKeys.slice().sort();
+  if (seen.length !== want.length || seen.some((k, idx) => k !== want[idx])) {
+    throw new Er1MalformedReceipt(
+      "document text and parsed reading disagree about object keys — no single reading");
+  }
   rejectLoneSurrogates(doc);
   if (!isPlainObject(doc)) {
     throw new Er1MalformedReceipt("top-level JSON must be an object");

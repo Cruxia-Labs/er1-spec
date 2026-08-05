@@ -687,7 +687,12 @@ def _reject_lone_surrogates(v: Any) -> None:
 def load_document(text: str) -> Any:
     """The one parse path. Every rule that makes a document's reading unambiguous lives here,
     so the CLI and any embedder get the same guarantees."""
-    doc = json.loads(text, object_pairs_hook=_no_duplicate_keys)
+    def _reject_constant(c):
+        # Python's json accepts NaN/Infinity/-Infinity; they are not JSON, and the JS
+        # verifiers refuse them, so a document could VERIFY here and fail there.
+        raise Er1MalformedReceipt(f"{c} is not valid JSON")
+
+    doc = json.loads(text, object_pairs_hook=_no_duplicate_keys, parse_constant=_reject_constant)
     _reject_lone_surrogates(doc)
     if not isinstance(doc, dict):
         raise Er1MalformedReceipt(f"top-level JSON must be an object, got {_jt(doc)}")
