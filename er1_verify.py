@@ -4,7 +4,7 @@
 ONE self-contained file. Drop it on any machine — it has NO external project imports, only
 the Python stdlib plus `cryptography` (for Ed25519). It recomputes the verdict from the
 receipt's own recorded constraint snapshot, checks the signature, the action binding, and the
-state-root, and prints VERIFIED or FAILED. Tamper a single byte and it fails.
+state-root, and prints VERIFIED or FAILED. Tamper a signed content byte and it fails.
 
     $ pip install cryptography
     $ er1-verify receipt.json               # (or: python er1_verify.py receipt.json)
@@ -61,13 +61,13 @@ import binascii
 import hashlib
 import json
 import sys
-import unicodedata
 from typing import Any, Optional
 
 # ── limits ──
 # Both bounds exist so adversarial input yields a verdict instead of a traceback.
 MAX_DEPTH = 100                      # nesting; Python's recursion limit is not a security control
 MAX_SAFE_INT = 2 ** 53 - 1           # the exactly-representable range shared with ECMAScript
+MAX_BYTES = 8 * 1024 * 1024          # a receipt is a constraint snapshot, not a payload
 
 
 class Er1MalformedReceipt(ValueError):
@@ -180,8 +180,11 @@ def _canon(v: Any, depth: int = 0) -> str:
     if isinstance(v, str):
         return _escape(v)
     if isinstance(v, dict):
-        # NFC BEFORE ordering: the canonical form is defined over normalized strings, so an
-        # independent port that normalizes-then-sorts must land on our exact bytes.
+        # NO normalization. Keys are serialized exactly as parsed and ordered by UTF-16
+        # code unit. Do not add an NFC pass here "to be safe" — NFC is bound to the
+        # runtime's Unicode version, so normalizing is what made the signed bytes depend on
+        # which interpreter ran. Identity is kept unambiguous by restricting the
+        # decision-bearing names to ASCII instead (see validate_receipt).
         for k in v.keys():
             if not isinstance(k, str):
                 raise Er1MalformedReceipt("object key is not a string")
@@ -424,18 +427,19 @@ def _conflict(beliefs, asserts):
 
     Assumes validate_receipt() has already run: every active deterministic constraint here is
     fully specified with known enum values."""
-    # Identity is normalized on both sides — canonical JSON normalizes these strings before
-    # they are signed, so comparing raw would let one signed byte-string carry two identities.
-    norm_asserts = dict(asserts)
+    # Exact comparison, no normalization: validate_receipt has already restricted entity
+    # names and assert keys to printable ASCII, where NFC is the identity function in every
+    # Unicode version. That restriction — not a normalization pass — is what stops one
+    # signed byte-string from carrying two identities.
     for b in beliefs:
         if b["status"] != "active" or b["source_kind"] != "deterministic":
             continue
         ent, rule = b["entity"], b["rule"]
         if rule == "excludes":
-            if ent in norm_asserts:
+            if ent in asserts:
                 return b["belief_id"], "BANNED_ENTITY"
-        elif ent in norm_asserts:
-            proposed = str(norm_asserts[ent])
+        elif ent in asserts:
+            proposed = str(asserts[ent])
             val = b["value"]
             if rule == "equals" and proposed != val:
                 return b["belief_id"], "SUPERSEDED_VALUE"
@@ -478,12 +482,28 @@ def _b64d(s, expect_len: int):
     raw = base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
     if len(raw) != expect_len:
         raise Er1MalformedReceipt(f"signature field must decode to {expect_len} bytes")
+    # The final character carries unused trailing bits that the decoder silently discards,
+    # so several spellings decode to identical bytes. Re-encoding and comparing pins the one
+    # canonical spelling — otherwise a stricter peer implementation refuses a signature block
+    # this one accepts.
+    if base64.urlsafe_b64encode(raw).decode().rstrip("=") != s:
+        raise Er1MalformedReceipt("signature field is not canonical base64url")
     return raw
 
 
+class Er1MissingCrypto(RuntimeError):
+    """`cryptography` is absent or too old. Not a verdict about the receipt — a verdict about
+    this machine, and the two must never be confused."""
+
+
 def verify_signature(receipt: dict) -> bool:
-    from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    except ImportError as exc:
+        raise Er1MissingCrypto(
+            f"cannot check signatures: {exc}. Install it with `pip install cryptography`."
+        ) from None
     if not isinstance(receipt, dict):
         return False
     sb = receipt.get("signature")
@@ -692,7 +712,7 @@ def main(argv=None) -> int:
             pinned.add(argv[i + 1])
             i += 2
             continue
-        if a in ("-h", "--help") and not paths:
+        if a in ("-h", "--help"):
             print(USAGE)
             return 0
         paths.append(a)
@@ -711,7 +731,12 @@ def main(argv=None) -> int:
                 # a load failure, not something to paper over — the two JS verifiers hashed a
                 # replacement character and reported VERIFIED on bytes Python could not read.
                 with open(path, encoding="utf-8-sig") as f:
-                    doc = load_document(f.read())
+                    text = f.read(MAX_BYTES + 1)
+                if len(text) > MAX_BYTES:
+                    raise Er1MalformedReceipt(
+                        f"input exceeds {MAX_BYTES} bytes — a receipt is a constraint "
+                        f"snapshot, not a payload")
+                doc = load_document(text)
             except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError,
                     RecursionError) as exc:
                 print(f"FAILED ✗  {path}  [could not load: {exc}]")
@@ -728,7 +753,11 @@ def main(argv=None) -> int:
                           f"fields and a `receipts` array]")
                     all_ok = False
                     continue
-                res = verify(receipt, trusted)
+                try:
+                    res = verify(receipt, trusted)
+                except Er1MissingCrypto as exc:
+                    print(f"error: {exc}", file=sys.stderr)
+                    return 2
                 d = receipt.get("decision") if isinstance(receipt.get("decision"), dict) else {}
                 status = "VERIFIED ✓" if res["ok"] else "FAILED ✗"
                 try:
