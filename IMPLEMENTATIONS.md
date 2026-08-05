@@ -28,8 +28,9 @@ each other — which proves the format is reproducible across *languages*, but n
 `golden_vectors.json` is **7 primitives + 6 signed receipts** under one fixed test key. A verifier:
 
 1. Reads the canonical-JSON scheme (documented in [`CONFORMANCE.md`](CONFORMANCE.md) — RFC
-   8785-inspired: sorted keys, NFC-normalized strings, non-ASCII `\uXXXX`-escaped, no insignificant
-   whitespace; the one deliberate deviation from RFC 8785 is noted there).
+   8785-inspired: sorted keys, strings serialized **as parsed** (no normalization — an earlier NFC
+   pass was itself the bug; see CONFORMANCE.md), non-ASCII `\uXXXX`-escaped, no insignificant
+   whitespace; the deliberate deviations from RFC 8785 are noted there).
 2. Reproduces the **primitive hashes** (`state_root`, `args_hash`, `chain_root_from_seed`) as
    `sha256:` over that canonical JSON.
 3. Implements the **~30-line conflict predicate** — three HALT codes (`BANNED_ENTITY`,

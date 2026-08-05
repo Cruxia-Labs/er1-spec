@@ -1,0 +1,9 @@
+# The sdist is the auditable form of the package: the module, the frozen golden vectors, and the
+# one test file that needs nothing else — so `pip download er1-verify --no-binary :all:` gives a
+# stranger everything required to prove this exact code reproduces the vectors, offline.
+# The Node/browser verifiers, the fuzz harness and the browser matrix live in the repository;
+# shipping a fragment of them here (which is what the default heuristic did — three test files
+# with no fixtures, no conftest and no corpus) is worse than shipping none.
+include golden_vectors.json
+include test_conformance.py
+prune tests

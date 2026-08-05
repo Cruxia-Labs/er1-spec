@@ -16,9 +16,11 @@ An ER1 receipt binds the CONSTRAINT STATE (the active, deterministic constraint 
 What it certifies: the verdict correctly follows from the recorded, signed pre-state — NOT the
 empirical truth of the constraints ("garbage in, certified garbage out"). receipt_id /
 created_at are signed metadata, excluded from the verdict recomputation. Full breach
-definition: SCOPE_OF_CERTIFICATION.md.
+definition: SCOPE_OF_CERTIFICATION.md
+(https://github.com/Cruxia-Labs/er1-spec/blob/main/SCOPE_OF_CERTIFICATION.md).
 
-SOUNDNESS RULES (v1.1, after the 2026-08-04 adversarial review). Each closes a class of
+SOUNDNESS RULES (revised after the 2026-08-04 adversarial review; the wire format stays the
+frozen v1 schema — this numbers nothing). Each closes a class of
 attack in which a receipt no one should trust printed VERIFIED:
 
   FAIL CLOSED. Anything unrecognized — an unknown enum value, a missing field on an active
@@ -575,8 +577,9 @@ def receipt_hash(receipt: dict) -> str:
 
 def verify(receipt: Any, trusted_keys: Optional[set] = None) -> dict:
     """Verify one receipt. `trusted_keys` optionally pins the acceptable signer public keys;
-    without it a receipt still verifies against the key it carries (see
-    SCOPE_OF_CERTIFICATION.md), and the CLI prints that key so the relying party can pin it."""
+    without it a receipt still verifies against the key it carries (see SCOPE_OF_CERTIFICATION.md
+    in the spec repo: https://github.com/Cruxia-Labs/er1-spec), and the CLI prints that key so the
+    relying party can pin it."""
     errs: list = []
     checks: dict = {}
 
@@ -764,7 +767,8 @@ def load_document(text: str) -> Any:
 
 USAGE = ("usage: er1-verify [--pubkey KEY]... <receipt.json | golden_vectors.json> [...]\n"
          "  --pubkey KEY   pin a trusted signer (repeatable). Without it, a receipt is\n"
-         "                 verified against the key it carries — see SCOPE_OF_CERTIFICATION.md.")
+         "                 verified against the key it carries — see SCOPE_OF_CERTIFICATION.md\n"
+         "                 at https://github.com/Cruxia-Labs/er1-spec")
 
 
 def main(argv=None) -> int:
