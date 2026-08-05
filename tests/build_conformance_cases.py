@@ -132,31 +132,41 @@ case("non_integral_number",
      "Python repr and ECMAScript ToString share no float grammar (1e21, 1e16, 1e-6 all differed).")
 
 # ── 8. degenerate keys ──
-case("small_order_key",
-     receipt(signature={"algorithm": "ed25519",
-                        "public_key": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                        "signature": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-                                     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}),
-     False, "signature",
-     "A small-order point makes one constant signature block verify against any message.")
+# CORRECT ENCODINGS ONLY. The first version of these cases used 87- and 88-character
+# signatures where 86 is required, so every one of them died at the base64 LENGTH gate and
+# never reached the small-order check at all. Deleting the entire blacklist left the corpus
+# green in all three languages while the universal forgery came straight back. The guard for
+# the worst bug this project has had was itself unguarded, for exactly the reason the bug
+# existed: a case that passes for the wrong reason tests nothing.
+# pk = 43 chars (32 bytes), signature = 86 chars (64 bytes). Anything else is a length test.
+IDENTITY_PK = "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"   # 0100..0000
+SIGN_BIT_PK = "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA"   # 0100..0080, sign bit set
+P_PLUS_1_PK = "7v________________________________________8"   # eeff..ffff
+GOOD_PK     = "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"   # the golden signer
+# basepoint || S=1 — with A = identity this satisfies S*B == R for EVERY message.
+UNIVERSAL_SIG = "WGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmYBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+# NOTE ON THE R OPERAND. The check reads `_small_order(pub_raw) or _small_order(sig_raw[:32])`.
+# The public-key operand is exercised by the three cases below (dropping it fails them). The R
+# operand is NOT black-box testable: with a non-degenerate key, a small-order R only verifies if
+# S*B == R + h*A actually holds, which needs the private key — so the Ed25519 math rejects it
+# whether or not we check. Dropping that operand therefore survives this corpus, and a case
+# pretending otherwise would pass for the wrong reason. It is guarded instead by the direct
+# helper contract test in test_conformance.py, and kept because libsodium checks both.
 
-# The SIGN-BIT spellings. Ed25519 puts the x-coordinate's sign in the high bit of byte 31, so
-# the identity point has a second encoding that OpenSSL and WebCrypto both accept. The blacklist
-# compared all 32 bytes and missed them, and with A = identity the verification equation collapses
-# to S*B == R — satisfied by R = base point, S = 1, for EVERY message. One constant signature
-# block verified every receipt in all three implementations, and the corpus stayed green because
-# it only pinned the canonical spelling.
-for name, pk in [
-    ("small_order_key_sign_bit", "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA"),      # 0100..0080
-    ("small_order_key_p_plus_1", "7v____________________________________-_"[:43]),    # eeff..ffff
+for name, pk, sig, why in [
+    ("small_order_key_identity", IDENTITY_PK, UNIVERSAL_SIG,
+     "The canonical identity point. One constant signature block verified EVERY receipt in all "
+     "three implementations until 534dfb6."),
+    ("small_order_key_sign_bit", SIGN_BIT_PK, UNIVERSAL_SIG,
+     "Ed25519 stores the x-coordinate's sign in the high bit of byte 31, so the identity point "
+     "has a second spelling that OpenSSL and WebCrypto both accept. The blacklist compared all "
+     "32 bytes and missed it; libsodium masks s[31] & 127 first."),
+    ("small_order_key_p_plus_1", P_PLUS_1_PK, UNIVERSAL_SIG,
+     "p+1 also decodes to the identity point."),
 ]:
     case(name,
-         receipt(signature={"algorithm": "ed25519", "public_key": pk,
-                            "signature": "WGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmYBAAAA"
-                                         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}),
-         False, "signature",
-         "A sign-bit spelling of the identity point: universal forgery if the blacklist does "
-         "not mask s[31] & 127 the way libsodium does.")
+         receipt(signature={"algorithm": "ed25519", "public_key": pk, "signature": sig}),
+         False, "signature", why)
 
 # ── 9. schema rules the verifier must enforce ──
 case("post_state_root_null_on_allow", receipt(post_state_root=None), False, "post_state_root",

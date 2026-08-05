@@ -175,6 +175,50 @@ def test_pubkey_pinning_rejects_a_self_signed_receipt():
     assert ER1.verify(receipt, {real})["ok"] is True               # pinned correctly: verifies
 
 
+def test_small_order_helper_covers_every_spelling():
+    """The blacklist guards the worst bug this project has had — one constant signature block
+    that verified every receipt. Its corpus cases were dead for a week: they carried 87- and
+    88-character signatures where 86 is required, so they died at the base64 length gate and
+    never reached the check. Deleting the entire blacklist left the suite green.
+
+    This tests the helper's contract directly, so the masking logic cannot be quietly dropped."""
+    small = {
+        "00" * 32,                                                     # zero
+        "01" + "00" * 31,                                              # identity, canonical
+        "01" + "00" * 30 + "80",                                       # identity, sign bit set
+        "ee" + "ff" * 31,                                              # p+1
+        "ec" + "ff" * 30 + "7f",                                       # p-1
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    }
+    for h in small:
+        assert ER1._small_order(bytes.fromhex(h)), f"{h} must be rejected as degenerate"
+        # every one of these also has a sign-bit twin that decodes to the same point
+        raw = bytearray(bytes.fromhex(h))
+        raw[31] ^= 0x80
+        assert ER1._small_order(bytes(raw)), f"sign-bit twin of {h} must be rejected"
+    # the real base point must NOT be rejected, or every genuine receipt breaks
+    assert not ER1._small_order(bytes.fromhex("58" + "66" * 31))
+
+
+def test_universal_forgery_is_refused_end_to_end():
+    """The actual attack, correctly encoded: public key = identity point, signature =
+    basepoint || S=1. With A = identity the verification equation collapses to S*B == R, which
+    this satisfies for EVERY message. Both operands correctly sized, so it reaches the check."""
+    import base64
+    b64 = lambda b: base64.urlsafe_b64encode(b).decode().rstrip("=")
+    forged = copy.deepcopy(GOLDEN["receipts"][3]["receipt"])
+    forged["signature"] = {
+        "algorithm": "ed25519",
+        "public_key": b64(bytes.fromhex("01" + "00" * 31)),
+        "signature": b64(bytes.fromhex("58" + "66" * 31) + bytes.fromhex("01" + "00" * 31)),
+    }
+    assert len(forged["signature"]["public_key"]) == 43
+    assert len(forged["signature"]["signature"]) == 86
+    assert ER1.verify_signature(forged) is False
+    assert ER1.verify(forged)["ok"] is False
+
+
 def test_post_state_root_rule_is_enforced():
     # er1.schema.json states it; before 2026-08-03 nothing checked it, so an
     # ALLOW receipt could record no resulting state and still verify.

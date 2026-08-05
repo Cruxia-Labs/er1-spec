@@ -1183,8 +1183,8 @@
    "error_contains": "malformed"
   },
   {
-   "name": "small_order_key",
-   "why": "A small-order point makes one constant signature block verify against any message.",
+   "name": "small_order_key_identity",
+   "why": "The canonical identity point. One constant signature block verified EVERY receipt in all three implementations until 534dfb6.",
    "doc": {
     "schema_version": "action-receipt/v0",
     "receipt_id": "case",
@@ -1220,7 +1220,7 @@
     "signature": {
      "algorithm": "ed25519",
      "public_key": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-     "signature": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+     "signature": "WGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmYBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     }
    },
    "expect_ok": false,
@@ -1228,7 +1228,7 @@
   },
   {
    "name": "small_order_key_sign_bit",
-   "why": "A sign-bit spelling of the identity point: universal forgery if the blacklist does not mask s[31] & 127 the way libsodium does.",
+   "why": "Ed25519 stores the x-coordinate's sign in the high bit of byte 31, so the identity point has a second spelling that OpenSSL and WebCrypto both accept. The blacklist compared all 32 bytes and missed it; libsodium masks s[31] & 127 first.",
    "doc": {
     "schema_version": "action-receipt/v0",
     "receipt_id": "case",
@@ -1264,7 +1264,7 @@
     "signature": {
      "algorithm": "ed25519",
      "public_key": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA",
-     "signature": "WGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmYBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+     "signature": "WGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmYBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     }
    },
    "expect_ok": false,
@@ -1272,7 +1272,7 @@
   },
   {
    "name": "small_order_key_p_plus_1",
-   "why": "A sign-bit spelling of the identity point: universal forgery if the blacklist does not mask s[31] & 127 the way libsodium does.",
+   "why": "p+1 also decodes to the identity point.",
    "doc": {
     "schema_version": "action-receipt/v0",
     "receipt_id": "case",
@@ -1307,8 +1307,8 @@
     "operator_version": "corpus/1",
     "signature": {
      "algorithm": "ed25519",
-     "public_key": "7v____________________________________-_",
-     "signature": "WGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmYBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+     "public_key": "7v________________________________________8",
+     "signature": "WGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmYBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     }
    },
    "expect_ok": false,
