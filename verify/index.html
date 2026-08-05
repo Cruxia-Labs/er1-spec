@@ -40,18 +40,33 @@ Accepts a single receipt or a <code>golden_vectors.json</code> bundle.</small></
 <div id="out"></div>
 
 <script type="module">
-  import { verify, verifyJson, receiptHash, Er1UnsupportedCryptoError } from "./er1_verify.browser.mjs";
+  import { verify, verifyJson, receiptHash, loadDocument, Er1MalformedReceipt, Er1UnsupportedCryptoError }
+    from "./er1_verify.browser.mjs";
 
   // Exposed for the cross-engine harness (tests/run_browser_matrix.py); not used by the page.
-  window.__er1 = { verify, verifyJson, receiptHash, Er1UnsupportedCryptoError };
+  window.__er1 = { verify, verifyJson, receiptHash, loadDocument, Er1MalformedReceipt, Er1UnsupportedCryptoError };
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-  // A golden_vectors bundle wraps each receipt as {name, receipt, ...}; a bare receipt has `decision`.
+  const isPlainObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+
+  // Must match _receipts_from / receiptsFrom in the two CLIs exactly. The earlier version of
+  // this page had its own loose copy with no ambiguity rule, so a document that was BOTH a
+  // forged receipt and a bundle carrying one genuine receipt rendered green VERIFIED here
+  // while both CLIs refused it. A page that disagrees with the reference verifiers is worse
+  // than no page: it is the surface a relying party actually drops a file onto.
   function receiptsFrom(doc) {
-    if (doc && Array.isArray(doc.receipts)) return doc.receipts.map((w) => [w.name, w.receipt]);
+    if (isPlainObject(doc) && Array.isArray(doc.receipts)) {
+      if (["decision", "signature", "action", "beliefs"].some((k) => k in doc)) {
+        return [[null, "AMBIGUOUS"]];
+      }
+      return doc.receipts.map((w, i) =>
+        isPlainObject(w) && isPlainObject(w.receipt)
+          ? [w.name, w.receipt]
+          : [`entry[${i}]`, null]);
+    }
     return [[null, doc]];
   }
 
@@ -59,11 +74,28 @@ Accepts a single receipt or a <code>golden_vectors.json</code> bundle.</small></
     const out = $("out");
     out.innerHTML = "";
     let doc;
-    try { doc = JSON.parse($("input").value); }
-    catch (e) { out.innerHTML = `<div class="item failed">not JSON: ${esc(e.message)}</div>`; return; }
+    // loadDocument, not bare JSON.parse: it is what enforces one-reading-per-document
+    // (duplicate keys, unpaired surrogates, non-object top level, parser/text key
+    // disagreement). Parsing directly here made every one of those rules dead code on the
+    // only path a user exercises.
+    try { doc = loadDocument($("input").value); }
+    catch (e) {
+      const why = e instanceof Er1MalformedReceipt ? e.message : `not JSON: ${e.message}`;
+      out.innerHTML = `<div class="item failed"><span class="failed">FAILED \u2717</span> ${esc(why)}</div>`;
+      return;
+    }
     for (const [name, r] of receiptsFrom(doc)) {
       const div = document.createElement("div");
       div.className = "item";
+      if (r === "AMBIGUOUS" || r === null) {
+        div.className = "item failed";
+        div.innerHTML = `<span class="failed">FAILED \u2717</span> ` + (name ? `<b>${esc(name)}</b> ` : "") +
+          esc(r === "AMBIGUOUS"
+            ? "ambiguous document: carries both receipt fields and a `receipts` array"
+            : "malformed bundle entry: no receipt object");
+        out.appendChild(div);
+        continue;
+      }
       try {
         const res = await verify(r);
         const hash = await receiptHash(r);
