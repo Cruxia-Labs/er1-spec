@@ -60,6 +60,8 @@ import base64
 import binascii
 import hashlib
 import json
+import os
+import stat
 import sys
 from typing import Any, Optional
 
@@ -732,6 +734,13 @@ def main(argv=None) -> int:
     try:
         for path in paths:
             try:
+                # A named pipe, device, or directory blocks forever on read: the tool waits
+                # for a writer that never comes, and a CI gate wedges with no verdict, no
+                # error and no timeout. A hang is worse than a crash — refuse anything that
+                # is not a regular file before opening it.
+                st = os.stat(path)
+                if not stat.S_ISREG(st.st_mode):
+                    raise Er1MalformedReceipt("not a regular file")
                 # utf-8-sig: tolerate a BOM some producers add inadvertently. Invalid UTF-8 is
                 # a load failure, not something to paper over — the two JS verifiers hashed a
                 # replacement character and reported VERIFIED on bytes Python could not read.

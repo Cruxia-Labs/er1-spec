@@ -20,7 +20,7 @@
 // er1_verify.py; this file must match it behaviour-for-behaviour, and tests/conformance_cases
 // is run against both to prove it.
 import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const MAX_DEPTH = 100;
@@ -586,6 +586,11 @@ function main(argv) {
       // Decode strictly: Node's "utf8" reader silently substitutes U+FFFD for malformed
       // bytes, so byte-tampered files verified here and were refused by Python — the file
       // to receipt mapping was many-to-one and byte-identity was gone.
+      // A FIFO/device/directory blocks forever on read — a wedged CI gate with no verdict.
+      // Refuse anything that is not a regular file before opening it.
+      if (!statSync(path).isFile()) {
+        throw new Er1MalformedReceipt("not a regular file");
+      }
       const raw = readFileSync(path);
       if (raw.length > MAX_BYTES) {
         throw new Er1MalformedReceipt(
