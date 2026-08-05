@@ -140,6 +140,24 @@ case("small_order_key",
      False, "signature",
      "A small-order point makes one constant signature block verify against any message.")
 
+# The SIGN-BIT spellings. Ed25519 puts the x-coordinate's sign in the high bit of byte 31, so
+# the identity point has a second encoding that OpenSSL and WebCrypto both accept. The blacklist
+# compared all 32 bytes and missed them, and with A = identity the verification equation collapses
+# to S*B == R — satisfied by R = base point, S = 1, for EVERY message. One constant signature
+# block verified every receipt in all three implementations, and the corpus stayed green because
+# it only pinned the canonical spelling.
+for name, pk in [
+    ("small_order_key_sign_bit", "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA"),      # 0100..0080
+    ("small_order_key_p_plus_1", "7v____________________________________-_"[:43]),    # eeff..ffff
+]:
+    case(name,
+         receipt(signature={"algorithm": "ed25519", "public_key": pk,
+                            "signature": "WGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmYBAAAA"
+                                         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}),
+         False, "signature",
+         "A sign-bit spelling of the identity point: universal forgery if the blacklist does "
+         "not mask s[31] & 127 the way libsodium does.")
+
 # ── 9. schema rules the verifier must enforce ──
 case("post_state_root_null_on_allow", receipt(post_state_root=None), False, "post_state_root",
      "The schema requires post_state_root == pre_state_root on ALLOW.")

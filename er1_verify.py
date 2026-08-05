@@ -469,6 +469,16 @@ _SMALL_ORDER = {
 _B64_ALPHABET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
 
 
+# Ed25519 encodes the x-coordinate's sign in the HIGH BIT of byte 31, so every point has two
+# accepted spellings and OpenSSL/WebCrypto decode both to the same point. Comparing all 32 bytes
+# therefore missed the sign-bit spellings of the identity — 0100..0080 and eeff..ffff — and with
+# A = identity the verification equation S*B == R + h*A collapses to S*B == R, which (R = base
+# point, S = 1) satisfies for EVERY message. One constant signature block verified every receipt.
+# libsodium's has_small_order masks s[31] & 127 before comparing; so do we, on the key and on R.
+def _small_order(raw: bytes) -> bool:
+    return raw[:31] + bytes([raw[31] & 0x7F]) in _SMALL_ORDER
+
+
 def _b64d(s, expect_len: int):
     """Strict, hand-rolled base64url. Every runtime's decoder has its own leniency — Node,
     CPython and WebCrypto accepted three different sets of malformed inputs, so the same file
@@ -514,7 +524,7 @@ def verify_signature(receipt: dict) -> bool:
     try:
         pub_raw = _b64d(sb["public_key"], 32)
         sig_raw = _b64d(sb["signature"], 64)
-        if pub_raw in _SMALL_ORDER or sig_raw[:32] in _SMALL_ORDER:
+        if _small_order(pub_raw) or _small_order(sig_raw[:32]):
             return False                      # a signature nobody produced must not verify
         # The signed message is the SHA-256 digest of the canonical body (not the raw body).
         # The signer and every reference verifier agree on this, and golden_vectors.json pins

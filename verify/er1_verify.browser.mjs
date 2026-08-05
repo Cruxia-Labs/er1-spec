@@ -344,6 +344,17 @@ const SMALL_ORDER = new Set([
   "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
 ]);
 
+// Ed25519 encodes the x-coordinate's sign in the HIGH BIT of byte 31, so every point has two
+// accepted spellings that decode to the same point. Comparing all 32 bytes missed the sign-bit
+// spellings of the identity (0100..0080, eeff..ffff); with A = identity the verification equation
+// collapses to S*B == R, which R = base point, S = 1 satisfies for EVERY message — one constant
+// signature block verified every receipt. libsodium masks s[31] & 127 first; so do we.
+function isSmallOrder(raw) {
+  const masked = Uint8Array.from(raw);
+  masked[31] &= 0x7f;
+  return SMALL_ORDER.has(Array.from(masked, (b) => b.toString(16).padStart(2, "0")).join(""));
+}
+
 const b64Key = (s) => b64urlToBytes(s, 32);
 const toHexKey = (buf) => toHex(buf);
 
@@ -354,7 +365,7 @@ async function verifySignature(r) {
   try {
     const pubRaw = b64urlToBytes(sb.public_key, 32);
     const sigRaw = b64urlToBytes(sb.signature, 64);
-    if (SMALL_ORDER.has(toHex(pubRaw)) || SMALL_ORDER.has(toHex(sigRaw.subarray(0, 32)))) {
+    if (isSmallOrder(pubRaw) || isSmallOrder(sigRaw.subarray(0, 32))) {
       return false;                       // a signature nobody produced must not verify
     }
   } catch {
