@@ -92,6 +92,61 @@ def check(engine: str, cases: list[dict], results: list[dict]) -> list[str]:
     return problems
 
 
+
+# The PAGE driver. PAGE_DRIVER above calls window.__er1 directly, which is the module; this one
+# types into the textarea and clicks Verify like a user, then reads what the page rendered. That
+# distinction is not academic: verify/index.html once parsed with bare JSON.parse and shipped its
+# own loose bundle-splitter, so a forged document rendered green VERIFIED while both CLIs refused
+# it — and the matrix stayed green the whole time, because it was testing the module underneath.
+PAGE_UI_DRIVER = """
+async (docs) => {
+  const out = [];
+  for (const d of docs) {
+    document.getElementById('input').value = d.text;
+    document.getElementById('out').innerHTML = '';
+    document.getElementById('run').click();
+    await new Promise(r => setTimeout(r, 800));
+    const rendered = document.getElementById('out').innerText.trim();
+    out.push({ name: d.name, verified: /VERIFIED/.test(rendered), rendered: rendered.slice(0, 200) });
+  }
+  return out;
+}
+"""
+
+
+def ui_cases():
+    """Documents the PAGE must refuse, plus one it must accept. Each attack is one the page
+    actually rendered as VERIFIED before the load path was routed through loadDocument."""
+    golden = json.loads((ROOT / "golden_vectors.json").read_text())
+    genuine = golden["receipts"][3]["receipt"]
+    forged = {
+        "schema_version": "action-receipt/v0", "receipt_id": "prod-deploy-approval",
+        "created_at": "2026-01-01T00:00:00Z",
+        "chain": {"sequence_number": 0, "prev_receipt_hash": None},
+        "pre_state_root": "sha256:" + "0" * 64, "post_state_root": "sha256:" + "0" * 64,
+        "action": {"tool": "deploy", "asserts": {"env:DEPLOY_TARGET": "production"},
+                   "resource": "k8s://prod"},
+        "action_binding": {"tool": "deploy", "args_hash": "sha256:" + "0" * 64,
+                           "resource": "k8s://prod"},
+        "beliefs": [], "decision": {"verdict": "ALLOW"},
+        "coverage": {"exclusions": []}, "operator_version": "forged/1",
+        "signature": {"algorithm": "ed25519", "public_key": "A" * 43, "signature": "A" * 86},
+        "receipts": [{"name": "prod-deploy-approval", "receipt": genuine}],
+    }
+    genuine_text = json.dumps(genuine)
+    return [
+        {"name": "ambiguous_receipt_and_bundle", "text": json.dumps(forged), "expect_verified": False},
+        {"name": "duplicate_decision_key",
+         "text": '{"decision": {"verdict":"ALLOW","note":"decoy"}, ' + genuine_text[1:],
+         "expect_verified": False},
+        {"name": "unpaired_surrogate_in_name",
+         "text": json.dumps({"receipts": [{"name": "prod\\ud800", "receipt": genuine}]})
+                 .replace("\\\\ud800", "\\ud800"),
+         "expect_verified": False},
+        {"name": "genuine_receipt_still_accepted", "text": genuine_text, "expect_verified": True},
+    ]
+
+
 def main(argv: list[str]) -> int:
     try:
         from playwright.sync_api import sync_playwright
@@ -124,9 +179,17 @@ def main(argv: list[str]) -> int:
             page.goto(f"http://127.0.0.1:{port}/verify/index.html")
             page.wait_for_function("() => !!window.__er1")
             results = page.evaluate(PAGE_DRIVER, cases)
+            ui = page.evaluate(PAGE_UI_DRIVER, ui_cases())
             version = browser.version
             browser.close()
             problems = check(name, cases, results)
+            for got, want in zip(ui, ui_cases()):
+                if got["verified"] != want["expect_verified"]:
+                    problems.append(
+                        f"PAGE UI {got['name']}: rendered "
+                        f"{'VERIFIED' if got['verified'] else 'FAILED'}, expected "
+                        f"{'VERIFIED' if want['expect_verified'] else 'FAILED'} "
+                        f"-- {got['rendered'][:110]}")
             n_ok = sum(1 for r in results if not r.get("threw") and r["ok"])
             n_fail = sum(1 for r in results if not r.get("threw") and not r["ok"])
             if problems:
