@@ -594,12 +594,16 @@ function rejectLoneSurrogates(v) {
 export function loadDocument(text) {
   const textKeys = scanJsonKeys(text);
   const doc = JSON.parse(text);
-  // The parser is not trusted to read the document correctly. Node 24's JSON.parse can
-  // misread an escaped object key ("\\u00e9" -> "\\") once the same process has parsed an
-  // object containing a backslash-escaped key, so what a file MEANS depends on what was
-  // parsed before it — and a signature computed over that misreading verified in Node while
-  // Python refused the same bytes. Comparing the parser's keys against the ones the document
-  // text actually contains closes the class without depending on any parser being correct.
+  // The parser is not trusted to read the document correctly: the keys the parser produced are
+  // compared against the keys the document TEXT contains, and disagreement is refused. "One
+  // reading or none" is a promise this format makes, so it is checked here rather than assumed
+  // of whatever JSON parser happens to be underneath.
+  //
+  // CORRECTION (2026-08-05). Commit 5c94d09 justified this guard with a specific V8 defect in
+  // Node 24's JSON.parse. That claim does not reproduce (200,000 parses on v24.11.1, zero
+  // misparses) and no V8 bug should be inferred from this code. Kept because it is nearly free
+  // and checks a promise the format makes; not independently testable. See er1_verify.mjs for the
+  // full note and tests/mutation_gate.py::mjs_trusts_the_parser for the measurement.
   const seen = parsedKeys(doc).slice().sort();
   const want = textKeys.slice().sort();
   if (seen.length !== want.length || seen.some((k, idx) => k !== want[idx])) {

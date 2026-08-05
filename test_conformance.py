@@ -321,3 +321,72 @@ if __name__ == "__main__":
     test_cli_verifies_the_golden_bundle()
     test_tilde_equals_is_compatible_release()
     print("ER1 conformance: all checks passed ✓")
+
+
+def test_a_document_that_is_both_bundle_and_receipt_is_refused(tmp_path):
+    """An UNSIGNED top-level `receipts` array used to decide what got verified.
+
+    So a forged receipt could carry one genuine receipt alongside its own signed fields: the
+    splitter saw a bundle, verified the genuine entry, printed VERIFIED and exited 0 — while the
+    document's own `decision` (the part a reader believes) was never checked at all. A document
+    that presents as both has no single reading and is refused as AMBIGUOUS."""
+    forged = copy.deepcopy(GOLDEN["receipts"][3]["receipt"])
+    forged["decision"]["verdict"] = "ALLOW"
+    genuine = copy.deepcopy(GOLDEN["receipts"][3]["receipt"])
+    doc = dict(forged)                                    # signed receipt fields at top level …
+    doc["receipts"] = [{"name": "cover", "receipt": genuine}]   # … AND a bundle array
+    p = tmp_path / "both.json"
+    p.write_text(json.dumps(doc))
+    assert ER1.main([str(p)]) == 1
+    assert ER1._receipts_from(doc, "x") == [("x", "AMBIGUOUS")]
+
+
+def test_oversize_input_is_refused_by_bytes_not_characters(tmp_path, capsys):
+    """MAX_BYTES is measured in BYTES on purpose. Reading through a text handle and taking len()
+    counted CHARACTERS, so one 10 MB file of two-byte characters was admitted here and refused in
+    Node — one signed receipt, two verdicts, from a bound that only looked shared.
+
+    The exit code is NOT the observation. An oversize file that is allowed through still fails
+    verification (it is not a receipt), so `main() == 1` holds with the bound removed and this test
+    passed for the wrong reason in its first version — caught by tests/mutation_gate.py, not by
+    review. What distinguishes the two worlds is WHERE it is refused: at load, before the bytes are
+    parsed at all."""
+    def refusal(path) -> str:
+        capsys.readouterr()
+        assert ER1.main([str(path)]) == 1
+        return capsys.readouterr().out
+
+    p = tmp_path / "huge.json"
+    p.write_bytes(b'{"a":"' + b"x" * (ER1.MAX_BYTES + 1) + b'"}')
+    out = refusal(p)
+    assert "could not load" in out and "exceeds" in out, out
+
+    # The character-vs-byte case that made the two implementations disagree: comfortably under the
+    # limit in characters, over it in UTF-8 bytes.
+    q = tmp_path / "wide.json"
+    q.write_text('{"a":"' + "é" * ((ER1.MAX_BYTES // 2) + 1) + '"}', encoding="utf-8")
+    assert len(q.read_text(encoding="utf-8")) < ER1.MAX_BYTES < q.stat().st_size
+    out = refusal(q)
+    assert "could not load" in out and "exceeds" in out, out
+
+
+def test_a_named_pipe_is_refused_instead_of_hanging(tmp_path):
+    """A named pipe, device or directory blocks forever on read: the tool waits for a writer that
+    never comes and a CI gate wedges with no verdict, no error and no timeout. A hang is worse than
+    a crash, so anything that is not a regular file is refused before it is opened.
+
+    Run as a subprocess with a timeout: a regression here would otherwise hang the whole suite
+    rather than failing it, which is the same "silence reads as success" failure in test form."""
+    import os
+    import subprocess
+    import sys
+
+    fifo = tmp_path / "pipe.json"
+    os.mkfifo(fifo)
+    try:
+        proc = subprocess.run([sys.executable, str(HERE / "er1_verify.py"), str(fifo)],
+                              capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        raise AssertionError("the verifier blocked on a named pipe instead of refusing it")
+    assert proc.returncode == 1
+    assert "could not load" in proc.stdout, proc.stdout

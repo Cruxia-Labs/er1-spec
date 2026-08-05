@@ -37,3 +37,10 @@ jobs:
         run: node tests/run_conformance_cases.mjs
       - name: Adversarial corpus — browser build refuses every case
         run: node tests/run_conformance_cases.mjs --browser
+      # Almost every test above asserts that something is REFUSED, and such a test still passes when
+      # the check it was written for is gone and something else refuses the input first. This step
+      # deletes one guard at a time and fails if the suite does not notice. `--fast` skips the three
+      # page mutations, which need Playwright; the gate says so in its output rather than counting
+      # them as passes.
+      - name: Mutation gate — every guard is actually guarded
+        run: python tests/mutation_gate.py --fast
