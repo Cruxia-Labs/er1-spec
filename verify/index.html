@@ -40,7 +40,7 @@ Accepts a single receipt or a <code>golden_vectors.json</code> bundle.</small></
 <div id="out"></div>
 
 <script type="module">
-  import { verify, verifyJson, receiptHash, loadDocument, Er1MalformedReceipt, Er1UnsupportedCryptoError }
+  import { verify, verifyJson, receiptHash, loadDocument, MAX_BYTES, Er1MalformedReceipt, Er1UnsupportedCryptoError }
     from "./er1_verify.browser.mjs";
 
   // Exposed for the cross-engine harness (tests/run_browser_matrix.py); not used by the page.
@@ -62,9 +62,13 @@ Accepts a single receipt or a <code>golden_vectors.json</code> bundle.</small></
       if (["decision", "signature", "action", "beliefs"].some((k) => k in doc)) {
         return [[null, "AMBIGUOUS"]];
       }
+      // entry[i] is the authoritative label and the unsigned `name` is decoration, exactly as
+      // in both CLIs. esc() already stops markup injection here, but a name reading
+      // "VERIFIED ✓ prod-deploy" sitting where the label goes still spoofs a reader, and the
+      // three implementations must label the same receipt the same way.
       return doc.receipts.map((w, i) =>
         isPlainObject(w) && isPlainObject(w.receipt)
-          ? [w.name, w.receipt]
+          ? [`entry[${i}]` + (typeof w.name === "string" ? ` name="${w.name}"` : ""), w.receipt]
           : [`entry[${i}]`, null]);
     }
     return [[null, doc]];
@@ -78,7 +82,18 @@ Accepts a single receipt or a <code>golden_vectors.json</code> bundle.</small></
     // (duplicate keys, unpaired surrogates, non-object top level, parser/text key
     // disagreement). Parsing directly here made every one of those rules dead code on the
     // only path a user exercises.
-    try { doc = loadDocument($("input").value); }
+    // The same 8 MiB bound both CLIs enforce, measured in BYTES not characters. Absent here, the
+    // page was the one implementation with no size limit at all — a rule the other two share is
+    // not a rule of the format if the third does not have it.
+    const text = $("input").value;
+    const nbytes = new TextEncoder().encode(text).length;
+    if (nbytes > MAX_BYTES) {
+      out.innerHTML = `<div class="item failed"><span class="failed">FAILED ✗</span> ` +
+        esc(`input exceeds ${MAX_BYTES} bytes — a receipt is a constraint snapshot, not a payload`) +
+        `</div>`;
+      return;
+    }
+    try { doc = loadDocument(text); }
     catch (e) {
       const why = e instanceof Er1MalformedReceipt ? e.message : `not JSON: ${e.message}`;
       out.innerHTML = `<div class="item failed"><span class="failed">FAILED \u2717</span> ${esc(why)}</div>`;
@@ -104,7 +119,16 @@ Accepts a single receipt or a <code>golden_vectors.json</code> bundle.</small></
           `<span class="${res.ok ? "verified" : "failed"}">${res.ok ? "VERIFIED ✓" : "FAILED ✗"}</span>` +
           (name ? ` <b>${esc(name)}</b>` : "") +
           ` &nbsp;verdict=${esc(v)} (recomputed ${res.recomputedVerdict})<br>` +
-          `<small>hash=${esc(hash)}</small>` +
+          // The signer is shown here for the same reason both CLIs always print it: this page
+          // proves a receipt is internally consistent and signed by the key it NAMES, not that
+          // the key belongs to anyone you trust. A green VERIFIED with no visible signer invites
+          // exactly the wrong conclusion, and the page is the surface a relying party actually
+          // uses. There is no pinning control here, so it is always "(unpinned)".
+          `<small>hash=${esc(hash)}` +
+          (typeof res.signer === "string"
+            ? ` &nbsp;signer=${esc(res.signer.slice(0, 12))}… <b>(unpinned)</b>`
+            : ` &nbsp;signer=${esc(String(res.signer))}`) +
+          `</small>` +
           (res.errors.length
             ? "<ul>" + res.errors.map((e) => `<li class="err">! ${esc(e)}</li>`).join("") + "</ul>"
             : "");

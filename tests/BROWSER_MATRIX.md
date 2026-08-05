@@ -10,18 +10,32 @@ The browser verifier's conformance surface is exercised at three levels:
    agreement triangle against `er1_verify.py` on every case.
 3. **Real engines via Playwright** (`tests/run_browser_matrix.py`) — loads `verify/index.html`
    from a loopback static server and runs all 16 cases (6 golden vectors, 6 verdict-flip tampers,
-   2 real tamper pairs + their untampered twins) inside the engine.
+   2 real tamper pairs + their untampered twins) inside the engine, against the module's exports.
+4. **The PAGE, driven like a user** (same script, `PAGE_UI_DRIVER`) — types into the textarea,
+   clicks Verify, and reads what was rendered. Levels 1-3 all test the module *underneath* the
+   page, and the page once shipped its own loose bundle-splitter that rendered a forged document
+   green while both CLIs refused it. These cases also assert what the page TELLS the user: a
+   verdict-only assertion cannot see a missing signer line or a refusal for the wrong reason.
 
 Playwright is NOT a dependency of this repo and is never auto-installed; the matrix below records
 the last local run and what is pending.
 
-## Status (last run: 2026-07-13, local)
+## Status (last run: 2026-08-05, local)
 
 | Engine   | Version            | Result | Notes |
 |----------|--------------------|--------|-------|
-| Chromium | 147.0.7727.15      | PASS   | 8 cases VERIFIED, 8 tamper cases FAILED as required (16/16) |
-| Firefox  | 148.0.2            | PASS   | 8 cases VERIFIED, 8 tamper cases FAILED as required (16/16) |
-| WebKit   | 26.4               | PASS   | 8 cases VERIFIED, 8 tamper cases FAILED as required (16/16) |
+| Chromium | 151.0.7922.34      | PASS   | 16/16 module cases; page UI 6/6 (4 attacks refused, 2 genuine accepted) |
+| Firefox  | 153.0              | PASS   | 16/16 module cases; page UI 6/6 |
+| WebKit   | 26.5               | PASS   | 16/16 module cases; page UI 6/6 |
+
+Page-UI cases: ambiguous receipt+bundle, duplicate `decision` key, unpaired surrogate in a bundle
+name, oversize input (> 8 MiB), hostile bundle name vs. the `entry[i]` label, and one genuine
+receipt that must still verify *and* must display its signer as `(unpinned)`.
+
+Each page-UI assertion was mutation-tested: deleting the signer render, the `(unpinned)` marker, or
+the size check each turns this matrix red. A mutation that fails to apply is indistinguishable from
+a guard that catches nothing, so the harness asserts the mutation changed the file before trusting
+the result — the first run of these mutations reported a false survivor for exactly that reason.
 
 WebCrypto Ed25519 note: the module feature-detects Ed25519 (RFC 8032 test-vector probe key) and
 throws the typed `Er1UnsupportedCryptoError("browser lacks WebCrypto Ed25519 …")` on engines

@@ -106,3 +106,26 @@ key is for conformance only and must never sign a production receipt.)
 
 Conformance of any other implementation is established by reproducing every entry in
 `golden_vectors.json`; see `CONFORMANCE.md`.
+
+## The exit-code contract (what a CI gate may rely on)
+
+| exit | meaning |
+|------|---------|
+| `0`  | every input was read, and every receipt in every input VERIFIED |
+| `1`  | any receipt FAILED, any input could not be read, or **any input contained no receipts** |
+| `2`  | usage error (no paths given, `--pubkey` with no key, missing `cryptography`) |
+
+Two rules earn their place in the table because breaking them let a gate pass on silence:
+
+**Nothing checked is never a pass, and it is a per-INPUT rule.** An input that yields zero
+receipts — an empty `receipts` array, a bundle whose entries carry no receipt object — fails, even
+when other inputs on the same command line verified. The whole-run version of this rule exited `0`
+for `er1-verify good.json empty-bundle.json` and never printed `empty-bundle.json` at all, so a
+gate globbing a directory read that as "all receipts verified."
+
+**The report is not a trusted surface, and the exit code is the only machine-readable verdict.**
+A bundle entry's `name` is outside every signature and is never validated. It is printed escaped,
+quoted, length-capped, and *after* the authoritative `entry[i]` label, because a name containing a
+newline and a plausible `VERIFIED ✓ …` line printed exactly that as its own line, out of a receipt
+that failed. Gate on the exit code. If you must parse the report, one status line per receipt is
+guaranteed; the text after `name=` is attacker-controlled data.

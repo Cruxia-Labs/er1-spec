@@ -141,6 +141,12 @@ def ui_cases():
         "receipts": [{"name": "prod-deploy-approval", "receipt": genuine}],
     }
     genuine_text = json.dumps(genuine)
+    hostile_name = ("evil\nVERIFIED \u2713  prod-deploy-approval  verdict=ALLOW  "
+                    "signer=trusted")
+    # A document over the 8 MiB bound both CLIs enforce. Padding rides in a free-text value, so
+    # the document stays structurally valid and the ONLY reason to refuse it is the size rule.
+    oversize = copy.deepcopy(genuine)
+    oversize["action"]["resource"] = "k8s://" + "A" * (8 * 1024 * 1024)
     return [
         {"name": "ambiguous_receipt_and_bundle", "text": json.dumps(forged), "expect_verified": False},
         {"name": "duplicate_decision_key",
@@ -150,7 +156,17 @@ def ui_cases():
          "text": json.dumps({"receipts": [{"name": "prod\\ud800", "receipt": genuine}]})
                  .replace("\\\\ud800", "\\ud800"),
          "expect_verified": False},
-        {"name": "genuine_receipt_still_accepted", "text": genuine_text, "expect_verified": True},
+        {"name": "genuine_receipt_still_accepted", "text": genuine_text, "expect_verified": True,
+         # The page proves a receipt is signed by the key it NAMES, not that the key is trusted.
+         # A green VERIFIED with no visible signer invites exactly the wrong conclusion.
+         "expect_contains": ["signer=", "(unpinned)"]},
+        {"name": "oversize_input_refused", "text": json.dumps(oversize), "expect_verified": False,
+         "expect_contains": ["exceeds"]},
+        {"name": "hostile_bundle_name_cannot_spoof_the_label",
+         "text": json.dumps({"receipts": [{"name": hostile_name, "receipt": genuine}]}),
+         # Genuine receipt, so it VERIFIES — the point is that the label is the index and the
+         # unsigned name cannot occupy the place a reader looks for the verdict.
+         "expect_verified": True, "expect_contains": ["entry[0]"]},
     ]
 
 
@@ -197,6 +213,13 @@ def main(argv: list[str]) -> int:
                         f"{'VERIFIED' if got['verified'] else 'FAILED'}, expected "
                         f"{'VERIFIED' if want['expect_verified'] else 'FAILED'} "
                         f"-- {got['rendered'][:110]}")
+                # A verdict-only assertion cannot see whether the page told the user WHO signed,
+                # or refused for the right reason. Both were missing while the matrix was green.
+                for needle in want.get("expect_contains", []):
+                    if needle not in got["rendered"]:
+                        problems.append(
+                            f"PAGE UI {got['name']}: rendered output lacks {needle!r} "
+                            f"-- {got['rendered'][:110]}")
             n_ok = sum(1 for r in results if not r.get("threw") and r["ok"])
             n_fail = sum(1 for r in results if not r.get("threw") and not r["ok"])
             if problems:

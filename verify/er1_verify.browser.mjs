@@ -57,6 +57,10 @@ async function ensureEd25519() {
 
 // ── soundness limits + typed structural error (mirrors er1_verify.py) ──
 const MAX_DEPTH = 100;
+// Both CLIs refuse an input over 8 MiB; this build had no size bound at ALL, so the one surface a
+// relying party actually drops a file onto was the one with the limit missing. Exported rather
+// than re-declared in the page: three copies of a constant is how the three implementations drift.
+export const MAX_BYTES = 8 * 1024 * 1024;
 
 export class Er1MalformedReceipt extends Error {}
 

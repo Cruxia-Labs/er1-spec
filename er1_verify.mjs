@@ -555,10 +555,38 @@ function receiptsFrom(doc, label) {
     }
     return doc.receipts.map((w, i) =>
       isPlainObject(w) && isPlainObject(w.receipt)
-        ? [`${label}:${w.name}`, w.receipt]
+        ? [`${label}:entry[${i}]${safeName(w.name)}`, w.receipt]
         : [`${label}:entry[${i}]`, null]);
   }
   return [[label, doc]];
+}
+
+/** Render an UNSIGNED bundle-entry name so it cannot forge a line of this tool's own report.
+ *
+ * See er1_verify.py::_safe_name. `name` is outside every signature and never validated, yet it
+ * was interpolated straight into the report line — so a name carrying a newline plus
+ * "VERIFIED ✓  prod-deploy-approval  verdict=ALLOW …" printed exactly that as its own line, out
+ * of a receipt that FAILED. Exit code stayed 1; the report lied, and grepping the report is what
+ * a CI gate actually does. The index is the authoritative label; the name is appended only
+ * escaped, quoted and length-capped. */
+function safeName(name) {
+  if (typeof name !== "string") {
+    return name === undefined || name === null ? "" : ` name=${JSON.stringify(String(name))}`;
+  }
+  // JSON.stringify already escapes `"`, `\` and every control character exactly as Python's
+  // json.dumps does. It does NOT escape non-ASCII, so escape what is left to lowercase \uXXXX
+  // per CODE UNIT, which reproduces json.dumps(ensure_ascii=True) byte for byte, surrogate
+  // pairs included. Iterating code POINTS instead would emit \U0001f4a9 where Python emits
+  // \ud83d\udca9, and the two reports would diverge on any astral character.
+  //
+  // The range starts at \u007f, NOT \u0080: json.dumps escapes DEL and JSON.stringify does
+  // not, so a name containing a raw DEL rendered escaped in Python and as a raw control byte
+  // in Node. Found by differentially rendering a corpus of hostile names through both
+  // implementations — not by reading either one.
+  let esc = JSON.stringify(name).slice(1, -1)
+    .replace(/[\u007f-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  if (esc.length > 60) esc = esc.slice(0, 57) + "...";
+  return ` name="${esc}"`;
 }
 
 const USAGE =
@@ -612,7 +640,16 @@ function main(argv) {
       allOk = false;
       continue;
     }
-    for (const [label, r] of receiptsFrom(doc, path)) {
+    const entries = receiptsFrom(doc, path);
+    if (entries.length === 0) {
+      // "Nothing checked is never a pass" must hold PER INPUT. The global checked===0 guard
+      // below only fires when EVERY input was empty, so `good.json empty-bundle.json` exited 0
+      // without ever printing empty-bundle.json. See er1_verify.py for the same fix.
+      process.stdout.write(`FAILED ✗  ${path}  [no receipts in input]\n`);
+      allOk = false;
+      continue;
+    }
+    for (const [label, r] of entries) {
       checked++;
       if (r === null) {
         process.stdout.write(`FAILED ✗  ${label}  [malformed bundle entry: no receipt object]\n`);

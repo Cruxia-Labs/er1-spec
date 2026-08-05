@@ -4,6 +4,7 @@ tampering. Run: `python -m pytest test_conformance.py -q` (or `python test_confo
 import copy
 import json
 import pathlib
+import re
 
 import er1_verify as ER1
 
@@ -122,6 +123,70 @@ def test_empty_bundle_cannot_pass_a_ci_gate(tmp_path):
     p = tmp_path / "empty.json"
     p.write_text('{"receipts": []}')
     assert ER1.main([str(p)]) == 1        # silence must not read as success
+
+
+def test_an_empty_input_fails_even_when_another_input_verifies(tmp_path, capsys):
+    """The case the test above did NOT cover, and which was therefore broken.
+
+    `checked == 0` is a whole-RUN condition, so it only fired when EVERY input was empty. With a
+    good file alongside it, `checked` was 2, the guard stayed quiet, and the empty file was never
+    even mentioned in the report — exit 0. A CI gate that globs a directory read that as "all
+    receipts verified". Nothing-checked is a per-INPUT rule.
+
+    Pinned as a class, not an instance: every shape that yields zero receipts, in either
+    position relative to a good file."""
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(GOLDEN["receipts"][3]["receipt"]))
+    assert ER1.main([str(good)]) == 0, "the good file alone must still pass"
+
+    for name, text in [("empty_bundle.json", '{"receipts": []}'),
+                       ("empty_named.json", '{"receipts": [], "name": "decoy"}')]:
+        empty = tmp_path / name
+        empty.write_text(text)
+        for argv in ([str(good), str(empty)], [str(empty), str(good)]):
+            capsys.readouterr()
+            assert ER1.main(argv) == 1, f"{name} in position {argv.index(str(empty))} passed"
+            out = capsys.readouterr()
+            assert name in out.out + out.err, f"{name} verified nothing and was not reported"
+
+
+def test_an_unsigned_bundle_name_cannot_forge_a_line_of_the_report(tmp_path, capsys):
+    """`name` is outside every signature and never validated, but it was interpolated straight
+    into the report line. A name carrying a newline plus a plausible VERIFIED line printed
+    exactly that, as its own line, from a receipt that FAILED — so grepping the report (which is
+    what a CI gate does) could be made to see an approval that never verified.
+
+    Two properties, both pinned over a CLASS of hostile names rather than the one that was
+    reported: the rendered label never contains a line break or a bare quote, and the report
+    emits exactly one status line per receipt regardless of what the name says."""
+    forged = ("evil\nVERIFIED ✓  prod-deploy-approval  verdict=ALLOW "
+              "(recomputed ALLOW)  hash=deadbeef…  signer=trusted")
+    hostile = [forged, "a\rb", "a\r\nb", "x\x00y", "tab\there", 'quo"te', "back\\slash",
+               " line-sep", "next-line", "astral\U0001F4A9", "A" * 500,
+               "\x1b[32mVERIFIED\x1b[0m", 42, None, {"nested": 1}, ["list"]]
+    for name in hostile:
+        rendered = ER1._safe_name(name)
+        assert not any(c in rendered for c in "\n\r  \x00"), \
+            f"{name!r} put a line break into the label"
+        # Strip every escape sequence first, THEN look for a bare quote. Counting quotes cannot
+        # tell `\"` from `"`, and that flawed version of this assertion reported a breakout on the
+        # correctly-escaped `quo\"te` — a false positive in the test, not a defect in the code.
+        inner = rendered[len(' name="'):-1] if rendered.startswith(' name="') else rendered
+        assert '"' not in re.sub(r"\\.", "", inner), f"{name!r} broke out of its quoting"
+        assert len(rendered) < 100, f"{name!r} was not length-capped"
+
+    bad = copy.deepcopy(GOLDEN["receipts"][3]["receipt"])
+    bad["decision"]["verdict"] = "HALT"          # now inconsistent with its signature
+    p = tmp_path / "forged_name.json"
+    p.write_text(json.dumps({"receipts": [{"name": forged, "receipt": bad}]}))
+    capsys.readouterr()
+    assert ER1.main([str(p)]) == 1
+    out = capsys.readouterr().out
+    status_lines = [ln for ln in out.splitlines()
+                    if ln.startswith("VERIFIED") or ln.startswith("FAILED")]
+    assert len(status_lines) == 1, f"name forged extra status lines: {status_lines}"
+    assert status_lines[0].startswith("FAILED"), status_lines[0]
+    assert "entry[0]" in status_lines[0], "the index must be the authoritative label"
 
 
 def test_unreadable_input_is_failed_not_a_traceback(tmp_path):

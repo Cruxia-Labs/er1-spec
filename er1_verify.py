@@ -661,11 +661,39 @@ def _receipts_from(doc: Any, label: str) -> list:
         out = []
         for i, w in enumerate(doc["receipts"]):
             if isinstance(w, dict) and isinstance(w.get("receipt"), dict):
-                out.append((f"{label}:{w.get('name')}", w["receipt"]))
+                out.append((f"{label}:entry[{i}]{_safe_name(w.get('name'))}", w["receipt"]))
             else:
                 out.append((f"{label}:entry[{i}]", None))
         return out
     return [(label, doc)]
+
+
+def _safe_name(name: Any) -> str:
+    """Render an UNSIGNED bundle-entry name so it cannot forge a line of this tool's own report.
+
+    `name` sits outside every signature and is never validated — it does not reach the verdict.
+    But it was interpolated straight into the report line, so a name containing a newline plus
+    "VERIFIED ✓  prod-deploy-approval  verdict=ALLOW …" printed exactly that, as its own line,
+    from a receipt that FAILED. The exit code stayed 1; the report lied. Anything that greps
+    this output for a named approval — which is what a CI gate does — was fooled by a field the
+    signer never saw.
+
+    So the authoritative part of the label is the INDEX, which no input controls, and the name
+    is appended only in a quoted, escaped, length-capped form.
+
+    json.dumps(ensure_ascii=True) is the escaper, not ascii(): ascii() switches to SINGLE quotes
+    when its argument contains a double quote, so a name of `quo"te` came back with a bare `"`
+    inside the double-quoted label — a quote breakout, in the first version of this very fix.
+    The test below found it because it pins the class (quotes, breaks, controls, astral, ANSI,
+    non-strings) rather than the one hostile name that was reported. json.dumps escapes `"`,
+    `\\`, every control character, and all non-ASCII as lowercase \\uXXXX surrogate pairs — which
+    is also exactly what the JS mirror produces, so the two reports stay byte-identical."""
+    if not isinstance(name, str):
+        return "" if name is None else f" name={json.dumps(str(name))}"
+    esc = json.dumps(name)[1:-1]     # drop json's own quotes, keep its escaping
+    if len(esc) > 60:
+        esc = esc[:57] + "..."
+    return f' name="{esc}"'
 
 
 def _no_duplicate_keys(pairs):
@@ -770,7 +798,17 @@ def main(argv=None) -> int:
                 print(f"FAILED ✗  {path}  [could not load: {exc}]")
                 all_ok = False
                 continue
-            for label, receipt in _receipts_from(doc, path):
+            entries = _receipts_from(doc, path)
+            if not entries:
+                # "Nothing checked is never a pass" has to hold PER INPUT, not just for the run
+                # as a whole. The global `checked == 0` guard below only fires when every input
+                # was empty, so `er1-verify good.json empty-bundle.json` exited 0 and never
+                # printed empty-bundle.json at all — a CI gate globbing a directory saw success
+                # for a file that verified nothing.
+                print(f"FAILED ✗  {path}  [no receipts in input]")
+                all_ok = False
+                continue
+            for label, receipt in entries:
                 checked += 1
                 if receipt is None:
                     print(f"FAILED ✗  {label}  [malformed bundle entry: no receipt object]")
