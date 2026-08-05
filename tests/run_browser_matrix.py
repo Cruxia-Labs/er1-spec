@@ -87,7 +87,14 @@ def check(engine: str, cases: list[dict], results: list[dict]) -> list[str]:
         if exp.get("hash") and r["receiptHash"] != exp["hash"]:
             problems.append(f"{label}: hash diverged")
         if not exp["ok"]:
-            if r["checks"]["signature"] or r["checks"]["verdict"]:
+            # A tampered receipt must not pass either gate. Since the v1.1 rebuild, structural
+            # validation runs BEFORE the predicate and returns early, so `checks` may legitimately
+            # carry no `verdict` key at all — the receipt never reached the recompute. Treat an
+            # absent check as "did not pass", which is what it means; indexing it blindly turned
+            # a correct refusal into a KeyError crash the first time this matrix ran after the
+            # rebuild. (It had not run since: playwright was not installed, so this guard sat
+            # unexecuted while the code beneath it changed.)
+            if r["checks"].get("signature") or r["checks"].get("verdict"):
                 problems.append(f"{label}: tamper must fail signature AND verdict recompute")
     return problems
 
@@ -198,8 +205,14 @@ def main(argv: list[str]) -> int:
                 for pr in problems:
                     print(f"    ! {pr}")
             else:
+                # Report the page-UI count explicitly. A guard you cannot see run is a guard
+                # you will not notice stopping — the failure mode this whole suite keeps hitting.
+                ui_refused = sum(1 for g in ui if not g["verified"])
+                ui_accepted = sum(1 for g in ui if g["verified"])
                 print(f"{name} ({version}): PASS — {n_ok} cases VERIFIED, "
-                      f"{n_fail} tamper cases FAILED as required ({len(results)} total)")
+                      f"{n_fail} tamper cases FAILED as required ({len(results)} total); "
+                      f"page UI: {ui_refused} attacks refused, {ui_accepted} genuine accepted "
+                      f"({len(ui)} total)")
     httpd.shutdown()
     return 1 if failed else 0
 
