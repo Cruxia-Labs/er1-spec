@@ -172,6 +172,9 @@ const RULES = new Set(["equals", "excludes", "satisfies"]);
 const STATUSES = new Set(["active", "superseded"]);
 const SOURCE_KINDS = new Set(["deterministic", "nl_extracted"]);
 const BELIEF_CLASSES = new Set(["CERTIFIED", "BEST_EFFORT"]);
+// The binding, not two independent enums: a belief's class is a FUNCTION of where it came
+// from. See er1_verify.py::BELIEF_CLASS_OF_SOURCE for why this exists.
+const BELIEF_CLASS_OF_SOURCE = { deterministic: "CERTIFIED", nl_extracted: "BEST_EFFORT" };
 
 // Printable ASCII, the character set the IDENTITY fields are restricted to — the names used to
 // look a constraint up. Within it, normalization is the identity function in every Unicode
@@ -233,9 +236,21 @@ export function validateReceipt(r) {
       throw new Er1MalformedReceipt(
         `beliefs[${i}].source_kind ${JSON.stringify(b.source_kind)} is not a known source_kind`);
     }
-    if ("belief_class" in b && !BELIEF_CLASSES.has(b.belief_class)) {
+    // Validated only WHEN PRESENT, and then never used — so er1.schema.json required it
+    // while the verifier did not, and nothing tied the label to the thing it labels. A
+    // producer could ship {source_kind: nl_extracted, belief_class: CERTIFIED}: an LLM's
+    // guess wearing the word CERTIFIED. See er1_verify.py for the full note.
+    // Absence must READ the same in every implementation — see er1_verify.mjs for the note.
+    const beliefClass = b.belief_class === undefined ? null : b.belief_class;
+    if (!BELIEF_CLASSES.has(beliefClass)) {
       throw new Er1MalformedReceipt(
-        `beliefs[${i}].belief_class ${JSON.stringify(b.belief_class)} is not a known belief_class`);
+        `beliefs[${i}].belief_class ${JSON.stringify(beliefClass)} is not a known belief_class`);
+    }
+    if (BELIEF_CLASS_OF_SOURCE[b.source_kind] !== beliefClass) {
+      throw new Er1MalformedReceipt(
+        `beliefs[${i}].belief_class ${JSON.stringify(beliefClass)} contradicts source_kind ` +
+        `${JSON.stringify(b.source_kind)} — ${JSON.stringify(b.source_kind)} beliefs are ` +
+        `${BELIEF_CLASS_OF_SOURCE[b.source_kind]}`);
     }
     if (status === "active" && b.source_kind === "deterministic") {
       requireStr(b, "belief_id", `beliefs[${i}]`, true);

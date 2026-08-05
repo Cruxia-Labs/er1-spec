@@ -212,6 +212,10 @@ RULES = {"equals", "excludes", "satisfies"}
 STATUSES = {"active", "superseded"}
 SOURCE_KINDS = {"deterministic", "nl_extracted"}
 BELIEF_CLASSES = {"CERTIFIED", "BEST_EFFORT"}
+# The binding, not two independent enums: a belief's class is a FUNCTION of where it came from.
+# Kept as a mapping rather than two `if`s so adding a source_kind without deciding its class is a
+# KeyError at validation time instead of a silently unchecked combination.
+BELIEF_CLASS_OF_SOURCE = {"deterministic": "CERTIFIED", "nl_extracted": "BEST_EFFORT"}
 
 
 def _jt(v: Any) -> str:
@@ -328,9 +332,28 @@ def validate_receipt(receipt: Any) -> None:
         if not _in_enum(source_kind, SOURCE_KINDS):
             raise Er1MalformedReceipt(
                 f"beliefs[{i}].source_kind {_q(source_kind)} is not a known source_kind")
-        if "belief_class" in b and not _in_enum(b["belief_class"], BELIEF_CLASSES):
+        # `belief_class` was validated only WHEN PRESENT, and then never used for anything. Two
+        # holes followed. First, er1.schema.json lists it in `required` for every constraint, so
+        # the verifier was looser than the schema it publishes. Second — the one that matters —
+        # nothing tied the label to the thing it labels, so a producer could ship
+        # {source_kind: nl_extracted, belief_class: CERTIFIED}: a prose-extracted belief wearing
+        # the word CERTIFIED. It would not gate (the recompute keys on source_kind), but a human
+        # or a dashboard reading the signed field sees "CERTIFIED" on an LLM's guess. In a format
+        # whose whole claim is that you need not trust the party that produced the receipt, a
+        # label the verifier never checks is exactly that trust creeping back in.
+        #
+        # SCOPE_OF_CERTIFICATION.md already states the pair as definitional — deterministic beliefs
+        # are CERTIFIED, prose-extracted beliefs are BEST_EFFORT — and says "the verifier enforces
+        # this in its recompute, not merely the producer." It did not. Now it does.
+        belief_class = b.get("belief_class")
+        if not _in_enum(belief_class, BELIEF_CLASSES):
             raise Er1MalformedReceipt(
-                f"beliefs[{i}].belief_class {_q(b['belief_class'])} is not a known belief_class")
+                f"beliefs[{i}].belief_class {_q(belief_class)} is not a known belief_class")
+        if BELIEF_CLASS_OF_SOURCE[source_kind] != belief_class:
+            raise Er1MalformedReceipt(
+                f"beliefs[{i}].belief_class {_q(belief_class)} contradicts source_kind "
+                f"{_q(source_kind)} — {_q(source_kind)} beliefs are "
+                f"{BELIEF_CLASS_OF_SOURCE[source_kind]}")
         # Only constraints that can gate must be fully specified; a superseded or
         # nl_extracted entry is inert either way, but its shape must still be sane.
         if status == "active" and source_kind == "deterministic":

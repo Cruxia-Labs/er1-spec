@@ -2511,6 +2511,167 @@
    "error_contains": "malformed"
   },
   {
+   "name": "certified_label_on_nl_extracted_belief",
+   "why": "A prose-extracted belief wearing the word CERTIFIED. It never gated (the recompute keys on source_kind) but the signed label read CERTIFIED to any human or dashboard — trust in the producer creeping back into a format whose claim is that you need not trust the producer.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "deploy",
+     "asserts": {
+      "env": "prod"
+     },
+     "resource": "k8s://prod"
+    },
+    "action_binding": {
+     "tool": "deploy",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "k8s://prod"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "env",
+      "rule": "equals",
+      "value": "prod",
+      "source_kind": "nl_extracted",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": []
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "contradicts source_kind"
+  },
+  {
+   "name": "best_effort_label_on_deterministic_belief",
+   "why": "The mirror case: a belief that DOES gate while labelled advisory. Pinning only the other direction would have left this half of the class reachable.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "deploy",
+     "asserts": {
+      "env": "prod"
+     },
+     "resource": "k8s://prod"
+    },
+    "action_binding": {
+     "tool": "deploy",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "k8s://prod"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "BEST_EFFORT",
+      "entity": "env",
+      "rule": "excludes",
+      "value": "*",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": []
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "contradicts source_kind"
+  },
+  {
+   "name": "belief_class_absent",
+   "why": "er1.schema.json lists belief_class in `required` for every constraint, but the verifier checked it only `if present` — looser than the schema it publishes.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "deploy",
+     "asserts": {
+      "env": "prod"
+     },
+     "resource": "k8s://prod"
+    },
+    "action_binding": {
+     "tool": "deploy",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "k8s://prod"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "entity": "env",
+      "rule": "excludes",
+      "value": "*",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": []
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "is not a known belief_class"
+  },
+  {
    "name": "well_formed_halt_recomputes",
    "why": "Control: unsigned, so it must fail on the SIGNATURE only — proving the corpus's other cases fail for their own stated reason and the predicate still works.",
    "doc": {

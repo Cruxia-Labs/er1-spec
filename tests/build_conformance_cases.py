@@ -237,6 +237,35 @@ case("compatible_release_single_component",
      "`~=2` has no upper bound to enforce — it degenerated into >=2, so the pin never gated. "
      "PEP 440 requires at least two components.")
 
+# ── 12b. belief_class must agree with the source it labels ──
+# `belief_class` used to be validated only WHEN PRESENT and then never used, so er1.schema.json
+# required it while the verifier did not, and nothing tied the label to the thing labelled. The
+# whole class is pinned here, not one member: both contradictory pairs, plus absent, plus null.
+case("certified_label_on_nl_extracted_belief",
+     receipt(beliefs=[belief(source_kind="nl_extracted", belief_class="CERTIFIED",
+                             rule="equals", value="prod")]),
+     False, "contradicts source_kind",
+     "A prose-extracted belief wearing the word CERTIFIED. It never gated (the recompute keys on "
+     "source_kind) but the signed label read CERTIFIED to any human or dashboard — trust in the "
+     "producer creeping back into a format whose claim is that you need not trust the producer.")
+
+case("best_effort_label_on_deterministic_belief",
+     receipt(beliefs=[belief(source_kind="deterministic", belief_class="BEST_EFFORT")]),
+     False, "contradicts source_kind",
+     "The mirror case: a belief that DOES gate while labelled advisory. Pinning only the other "
+     "direction would have left this half of the class reachable.")
+
+_absent = belief()
+del _absent["belief_class"]
+case("belief_class_absent",
+     receipt(beliefs=[_absent]),
+     False, "is not a known belief_class",
+     "er1.schema.json lists belief_class in `required` for every constraint, but the verifier "
+     "checked it only `if present` — looser than the schema it publishes.")
+
+# (belief_class = explicit null is already pinned in section 12; ABSENCE was the missing case.)
+
+
 # ── 13. the positive control: a well-formed receipt must still recompute ──
 case("well_formed_halt_recomputes",
      receipt(beliefs=[belief()],

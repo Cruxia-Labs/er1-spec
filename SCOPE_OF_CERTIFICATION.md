@@ -39,7 +39,14 @@ from the receipt's own contents, offline, with no network and no access to our s
 - **Not natural-language / advisory beliefs.** Only typed, deterministic beliefs
   (`source_kind = deterministic`, `belief_class = CERTIFIED`) can produce a HALT. Beliefs
   extracted from prose are `BEST_EFFORT`, advisory, and are listed under `coverage.exclusions`;
-  they never gate. The verifier enforces this in its recompute, not merely the producer.
+  they never gate. The verifier enforces this in its recompute, not merely the producer — and
+  `belief_class` is **required** and must agree with `source_kind`: `deterministic` beliefs are
+  `CERTIFIED`, `nl_extracted` beliefs are `BEST_EFFORT`, and any other pairing is refused as
+  malformed. The two fields are one fact stated twice, not two independent labels. (Until
+  2026-08-05 they were independent: `belief_class` was validated only when present and then never
+  used, so a receipt could carry `nl_extracted` + `CERTIFIED` — a prose-extracted belief wearing
+  the word CERTIFIED. It could not gate, but the signed label read `CERTIFIED` to any human or
+  dashboard, which is trust in the producer re-entering a format built to remove it.)
 - **Not anything outside the recorded belief set.** Coverage is exactly the typed beliefs in
   the receipt and the entities the action asserts. A risk not expressed as a typed belief is
   out of scope and the receipt makes no claim about it.
