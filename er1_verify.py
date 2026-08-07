@@ -368,6 +368,26 @@ def validate_receipt(receipt: Any) -> None:
             if rule != "excludes":
                 _require_str(b, "value", f"beliefs[{i}]")
 
+    # coverage.unevaluated_constraints carries semantics as of 1.0.1 (it is the declared set
+    # _check_unevaluated recomputes), so when the name is present its shape must be exact.
+    # Everything else under coverage stays unread, and an absent field is an empty declaration —
+    # receipts that evaluated every constraint are untouched, byte for byte.
+    coverage = receipt.get("coverage")
+    if isinstance(coverage, dict) and "unevaluated_constraints" in coverage:
+        entries = coverage["unevaluated_constraints"]
+        if not isinstance(entries, list):
+            raise Er1MalformedReceipt("coverage.unevaluated_constraints must be an array")
+        for i, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                raise Er1MalformedReceipt(
+                    f"coverage.unevaluated_constraints[{i}] is not an object")
+            _require_str(entry, "entity", f"coverage.unevaluated_constraints[{i}]",
+                         id_safe=True)
+            _require_str(entry, "constraint", f"coverage.unevaluated_constraints[{i}]")
+            if "reason" in entry and not isinstance(entry["reason"], str):
+                raise Er1MalformedReceipt(
+                    f"coverage.unevaluated_constraints[{i}].reason must be a string")
+
     decision = receipt.get("decision")
     if not isinstance(decision, dict):
         raise Er1MalformedReceipt("decision must be an object")
@@ -427,26 +447,126 @@ def _compatible(proposed, constraint):
     return pv[:len(prefix)] == prefix
 
 
-def _satisfies(proposed_raw, constraint_raw):
+def _lex_sp(s):
+    """Drop leading/trailing U+0020 — and ONLY U+0020. Python's str.strip and ECMAScript's
+    String.trim remove different whitespace sets, which is exactly the class of divergence
+    this module exists to prevent, so the one blessed spacing character is handled by hand."""
+    i, j = 0, len(s)
+    while i < j and s[i] == " ":
+        i += 1
+    while j > i and s[j - 1] == " ":
+        j -= 1
+    return s[i:j]
+
+
+_OPS = (">=", "<=", "==", "!=", "~=", ">", "<", "=")
+
+
+def _constraint_target(constraint_raw):
+    """(op, parsed_target) for an operator constraint; (None, parsed_or_None) for a bare one.
+
+    Raises when an operator constraint's own version does not parse: that is the RULE being
+    unevaluable — a producer defect no action can repair, so it is never declarable as a
+    coverage gap. `~=` with fewer than two components is checked here, before the proposed
+    version is even looked at, so a malformed rule is malformed regardless of the action.
+    The version after the operator may be surrounded by U+0020 (`>= 2.0` is how humans write
+    pins); the operator itself must be flush-left."""
     c = constraint_raw if isinstance(constraint_raw, str) else str(constraint_raw)
-    for op in (">=", "<=", "==", "~=", ">", "<", "="):
+    for op in _OPS:
         if c.startswith(op):
-            target = _parse_ver(c[len(op):])
-            proposed = _parse_ver(proposed_raw)
-            if target is None or proposed is None:
+            target = _parse_ver(_lex_sp(c[len(op):]))
+            if target is None:
                 raise Er1MalformedReceipt(
-                    f"cannot evaluate {op} between {_q(str(proposed_raw))} and {_q(c)}: not versions")
-            if op == "~=":
-                return _compatible(proposed, target)
-            cmp = _ver_cmp(proposed, target)
-            return {">=": cmp >= 0, ">": cmp > 0, "<=": cmp <= 0, "<": cmp < 0,
-                    "==": cmp == 0, "=": cmp == 0}[op]
-    # No operator: exact equality of the version, or — when neither side is a version —
-    # exact string equality, which is well defined and language-independent.
-    target, proposed = _parse_ver(c), _parse_ver(proposed_raw)
-    if target is None or proposed is None:
-        return str(proposed_raw) == c
-    return _ver_cmp(proposed, target) == 0
+                    f"cannot evaluate {op} against {_q(c)}: the constraint is not a version")
+            if op == "~=" and len(target) < 2:
+                raise Er1MalformedReceipt("~= needs at least two version components")
+            return op, target
+    return None, _parse_ver(c)
+
+
+def _unevaluable(proposed_raw, constraint_raw):
+    """True iff the constraint names a version bound but the proposed version does not parse —
+    the ONE case a receipt may declare in coverage.unevaluated_constraints instead of failing.
+    A constraint whose own version is malformed is not unevaluable, it is malformed; a bare
+    non-version constraint is always evaluable (exact string equality)."""
+    try:
+        _, target = _constraint_target(constraint_raw)
+    except Er1MalformedReceipt:
+        return False
+    if target is None:
+        return False
+    return _parse_ver(proposed_raw) is None
+
+
+def _satisfies(proposed_raw, constraint_raw):
+    op, target = _constraint_target(constraint_raw)
+    proposed = _parse_ver(proposed_raw)
+    if op is None:
+        # No operator: exact equality of the version, or — when neither side is a version —
+        # exact string equality, which is well defined and language-independent. A version
+        # pin against an unparseable proposed version is not evaluable and cannot gate;
+        # _check_unevaluated has already required the receipt to DECLARE that gap, so
+        # returning True here never lets a silent skip through.
+        if target is None:
+            return str(proposed_raw) == (
+                constraint_raw if isinstance(constraint_raw, str) else str(constraint_raw))
+        if proposed is None:
+            return True
+        return _ver_cmp(proposed, target) == 0
+    if proposed is None:
+        return True     # declared-unevaluable; enforced by _check_unevaluated, see above
+    if op == "~=":
+        return _compatible(proposed, target)
+    cmp = _ver_cmp(proposed, target)
+    return {">=": cmp >= 0, ">": cmp > 0, "<=": cmp <= 0, "<": cmp < 0,
+            "==": cmp == 0, "=": cmp == 0, "!=": cmp != 0}[op]
+
+
+def _recompute_unevaluated(beliefs, asserts):
+    """The set of (entity, constraint) pairs that are present but not evaluable — a FULL pass
+    over every active deterministic satisfies-constraint, independent of the conflict
+    short-circuit, so the set is deterministic on both the producing and verifying side."""
+    out = set()
+    for b in beliefs:
+        if b["status"] != "active" or b["source_kind"] != "deterministic":
+            continue
+        if b["rule"] == "satisfies" and b["entity"] in asserts:
+            if _unevaluable(str(asserts[b["entity"]]), b["value"]):
+                out.add((b["entity"], b["value"]))
+    return out
+
+
+def _check_unevaluated(beliefs, asserts, coverage):
+    """coverage.unevaluated_constraints must equal recomputation — EXACTLY.
+
+    An unpinned install against `satisfies dep:x >=2.0` cannot be evaluated. 1.0.0 refused
+    every such receipt, including the honest producer's that RECORDS the gap. The rule now:
+    an unevaluable version constraint is acceptable ONLY when the receipt declares it, and
+    the declaration must recompute. An undeclared gap is a silent skip — the gate bypass the
+    conformance corpus pins. An over-declaration asserts a gap that did not exist, which is
+    a check the receipt claims was skipped but actually ran. Both are malformed; the field
+    is as recomputable as the verdict itself. Returns the recomputed set for reporting."""
+    recomputed = _recompute_unevaluated(beliefs, asserts)
+    declared = set()
+    if isinstance(coverage, dict):
+        for entry in coverage.get("unevaluated_constraints") or []:
+            declared.add((entry["entity"], entry["constraint"]))
+    # UTF-16 code-unit order, same as canonical-JSON key sorting: JavaScript's default string
+    # comparison is code-unit order, so "first mismatch" must mean the same pair everywhere.
+    pair_key = lambda p: (_utf16_key(p[0]), _utf16_key(p[1]))  # noqa: E731
+    undeclared = sorted(recomputed - declared, key=pair_key)
+    if undeclared:
+        ent, val = undeclared[0]
+        raise Er1MalformedReceipt(
+            f"constraint {_q(val)} on {_q(ent)} is not evaluable (no version pinned in the "
+            f"action) and the receipt does not declare it in coverage.unevaluated_constraints")
+    phantom = sorted(declared - recomputed, key=pair_key)
+    if phantom:
+        ent, val = phantom[0]
+        raise Er1MalformedReceipt(
+            f"coverage.unevaluated_constraints declares {_q(val)} on {_q(ent)} "
+            f"but recomputation finds no such gap")
+    return recomputed
 
 
 def _conflict(beliefs, asserts):
@@ -617,7 +737,7 @@ def verify(receipt: Any, trusted_keys: Optional[set] = None) -> dict:
                 pass
         checks["trusted_signer"] = signer_bytes is not None and signer_bytes in pinned_bytes
         if not checks["trusted_signer"]:
-            errs.append(f"signer not in pinned key set: {signer!r}")
+            errs.append(f"signer not in pinned key set: {_q(signer)}")  # _q: match JSON.stringify
 
     try:
         action = receipt["action"]
@@ -641,12 +761,18 @@ def verify(receipt: Any, trusted_keys: Optional[set] = None) -> dict:
         if not checks["state_root"]:
             errs.append("pre_state_root mismatch")
 
+        # Before the verdict recomputes: any constraint that is present but unevaluable must
+        # be declared, and every declaration must be real (raises Er1MalformedReceipt if not).
+        unevaluated = _check_unevaluated(beliefs, asserts, receipt.get("coverage"))
+
         c = _conflict(beliefs, asserts)
         recomputed = "HALT" if c is not None else "ALLOW"
         recorded = receipt["decision"]
         checks["verdict"] = recomputed == recorded.get("verdict")
         if not checks["verdict"]:
-            errs.append(f"verdict: recomputed {recomputed} vs recorded {recorded.get('verdict')!r}")
+            # _q, not !r: this message had never been exercised cross-language until the 1.0.1
+            # corpus cases hit it, and Python's repr quotes differently than JSON.stringify.
+            errs.append(f"verdict: recomputed {recomputed} vs recorded {_q(recorded.get('verdict'))}")
         if c is not None:
             if recorded.get("conflicting_belief_id") != c[0]:
                 errs.append("verdict: conflicting_belief_id mismatch")
@@ -668,8 +794,16 @@ def verify(receipt: Any, trusted_keys: Optional[set] = None) -> dict:
         return {"ok": False, "recomputed_verdict": None, "checks": checks,
                 "errors": errs + [f"malformed receipt: {exc}"], "signer": signer}
 
-    return {"ok": not errs, "recomputed_verdict": recomputed, "checks": checks,
-            "errors": errs, "signer": signer}
+    out = {"ok": not errs, "recomputed_verdict": recomputed, "checks": checks,
+           "errors": errs, "signer": signer}
+    if unevaluated:
+        # A verdict with a declared gap must not read identically to one without: the receipt
+        # says which constraints it could NOT check, so the verifier says so too. Key present
+        # only when non-empty, mirroring the receipt field itself.
+        out["unevaluated_constraints"] = [
+            {"entity": e, "constraint": v}
+            for e, v in sorted(unevaluated, key=lambda p: (_utf16_key(p[0]), _utf16_key(p[1])))]
+    return out
 
 
 # ── CLI ──
@@ -869,6 +1003,12 @@ def main(argv=None) -> int:
                       f"(recomputed {res['recomputed_verdict']})  hash={short}  {sig_note}")
                 for e in res["errors"]:
                     print(f"    ! {e}")
+                # A verified receipt with a declared coverage gap must not print identically
+                # to a fully-checked one — the whole point of the declaration is that "checked
+                # and passed" and "could not check" are different facts.
+                for u in res.get("unevaluated_constraints", []):
+                    print(f"    ~ not evaluated: {_q(u['constraint'])} on {_q(u['entity'])} "
+                          f"(no version pinned in the action; declared by the receipt)")
                 all_ok = all_ok and res["ok"]
     except BrokenPipeError:
         # `er1-verify … | head` closes stdout early. Exiting 0 here would report success for

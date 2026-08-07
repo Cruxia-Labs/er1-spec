@@ -277,6 +277,105 @@ MUTATIONS = [
         "the opposite conclusion.",
         needs_browser=True,
     ),
+
+    # ── the 1.0.1 declaration machinery: unevaluable is acceptable ONLY when declared ──
+    Mutation(
+        "py_undeclared_gap_allowed",
+        "er1_verify.py",
+        "    if undeclared:\n",
+        "    if False and undeclared:\n",
+        "the undeclared-gap refusal. Without it an unpinned install against a version pin is a "
+        "silent skip that verifies as ALLOW — the exact bypass corpus section 3 pins.",
+    ),
+    Mutation(
+        "mjs_undeclared_gap_allowed",
+        "er1_verify.mjs",
+        "  if (undeclared.length) {\n",
+        "  if (false && undeclared.length) {\n",
+        "the same silent-skip bypass in the Node CLI.",
+    ),
+    Mutation(
+        "py_phantom_declaration_allowed",
+        "er1_verify.py",
+        "    if phantom:\n",
+        "    if False and phantom:\n",
+        "the over-declaration refusal. Without it a producer can blanket-declare every "
+        "constraint unevaluated and the field stops meaning anything.",
+    ),
+    Mutation(
+        "mjs_phantom_declaration_allowed",
+        "er1_verify.mjs",
+        "  if (phantom.length) {\n",
+        "  if (false && phantom.length) {\n",
+        "the same blanket-declaration laundering in the Node CLI.",
+    ),
+    Mutation(
+        "py_unevaluable_never",
+        "er1_verify.py",
+        "    if target is None:\n        return False\n    return _parse_ver(proposed_raw) is None\n",
+        "    return False\n",
+        "the unevaluable classification itself. With it gone the declared set recomputes empty, "
+        "yet _satisfies still returns True for an unparseable proposed version — so every "
+        "version_bypass receipt verifies as a clean ALLOW with no declaration required.",
+    ),
+    Mutation(
+        "mjs_unevaluable_never",
+        "er1_verify.mjs",
+        "  if (target === null) return false;\n  return parseVer(proposedRaw) === null;\n",
+        "  return false;\n",
+        "the same classification in the Node CLI.",
+    ),
+    Mutation(
+        "py_declaration_check_skipped",
+        "er1_verify.py",
+        '        unevaluated = _check_unevaluated(beliefs, asserts, receipt.get("coverage"))\n',
+        "        unevaluated = set()\n",
+        "the whole declaration check at the verify() call site — the guard can be perfect and "
+        "still guard nothing if nobody calls it, which is how verify_chain shipped green on "
+        "zero records.",
+    ),
+    Mutation(
+        "py_neq_operator_dropped",
+        "er1_verify.py",
+        '_OPS = (">=", "<=", "==", "!=", "~=", ">", "<", "=")\n',
+        '_OPS = (">=", "<=", "==", "~=", ">", "<", "=")\n',
+        "the != operator — 1.0.0 exactly. The whole expression falls into the bare branch and "
+        "string-compares, agreeing with wrong verdicts in both directions.",
+    ),
+    Mutation(
+        "mjs_neq_operator_dropped",
+        "er1_verify.mjs",
+        'const OPS = [">=", "<=", "==", "!=", "~=", ">", "<", "="];\n',
+        'const OPS = [">=", "<=", "==", "~=", ">", "<", "="];\n',
+        "the same regression in the Node CLI.",
+    ),
+    Mutation(
+        "py_space_lex_dropped",
+        "er1_verify.py",
+        "            target = _parse_ver(_lex_sp(c[len(op):]))\n",
+        "            target = _parse_ver(c[len(op):])\n",
+        "the U+0020 lexing of the constraint target: `>= 2.0` — how humans write pins — goes "
+        "back to being a malformed receipt.",
+    ),
+    Mutation(
+        "py_space_lex_greedy",
+        "er1_verify.py",
+        '    while i < j and s[i] == " ":\n',
+        '    while i < j and s[i] in " \\t":\n',
+        "the U+0020-ONLY rule. Widening the accepted whitespace re-opens the strip()/trim() "
+        "divergence between the two languages that the hand-rolled lexer exists to prevent.",
+    ),
+    Mutation(
+        "py_compat_single_component_declarable",
+        "er1_verify.py",
+        '            if op == "~=" and len(target) < 2:\n'
+        '                raise Er1MalformedReceipt("~= needs at least two version components")\n',
+        "",
+        "the action-independent ~= arity check. Without it, `~=2` plus an UNPINNED proposed "
+        "version becomes declarable-unevaluable and verifies — a malformed rule laundered into "
+        "an ALLOW through the coverage field. (_compatible still raises for pinned versions, "
+        "which is why the check must fire before the proposed version is looked at.)",
+    ),
 ]
 
 

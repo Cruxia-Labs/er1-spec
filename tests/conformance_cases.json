@@ -2672,6 +2672,765 @@
    "error_contains": "is not a known belief_class"
   },
   {
+   "name": "unpinned_declared_gap_recomputes",
+   "why": "Control for the declaration rule: unpinned install, gap correctly declared — every predicate check must pass and the ONLY failure is the missing signature, proving the cases below fail for their own stated reason. (Signed positives live in the golden vectors.) Under 1.0.0 this receipt — the honest producer's actual output — was refused as malformed.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "unknown"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": ">=2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": [],
+     "unevaluated_constraints": [
+      {
+       "entity": "dep:x",
+       "constraint": ">=2.0",
+       "reason": "no version pinned in the action; the constraint was not evaluated"
+      }
+     ]
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "signature"
+  },
+  {
+   "name": "phantom_declaration",
+   "why": "The declaration names an entity with no unevaluable constraint. An over-declaration asserts a check was skipped that actually ran (or never existed) — accepting it would let a producer blanket-declare everything and turn the field into noise.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "unknown"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": ">=2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": [],
+     "unevaluated_constraints": [
+      {
+       "entity": "dep:x",
+       "constraint": ">=2.0",
+       "reason": "real"
+      },
+      {
+       "entity": "dep:other",
+       "constraint": ">=1.0",
+       "reason": "forged"
+      }
+     ]
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "no such gap"
+  },
+  {
+   "name": "phantom_declaration_evaluable",
+   "why": "The declared entity exists but its constraint WAS evaluable (version pinned): the gap did not exist, so the declaration is false and the receipt is refused. The declared set must equal recomputation in both directions.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "2.5"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": ">=2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": [],
+     "unevaluated_constraints": [
+      {
+       "entity": "dep:x",
+       "constraint": ">=2.0",
+       "reason": "no version pinned in the action; the constraint was not evaluated"
+      }
+     ]
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "no such gap"
+  },
+  {
+   "name": "unevaluated_declaration_not_array",
+   "why": "The field carries semantics as of 1.0.1, so an unreadable shape fails closed instead of being skipped — a check that reports instead of gating is how every prior bypass began.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "unknown"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": ">=2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": [],
+     "unevaluated_constraints": "lol"
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "must be an array"
+  },
+  {
+   "name": "unevaluated_entry_not_object",
+   "why": "Same class, one level down.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "unknown"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": ">=2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": [],
+     "unevaluated_constraints": [
+      42
+     ]
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "is not an object"
+  },
+  {
+   "name": "unevaluated_entry_constraint_null",
+   "why": "Same class: an explicit null is not a declaration.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "unknown"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": ">=2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": [],
+     "unevaluated_constraints": [
+      {
+       "entity": "dep:x",
+       "constraint": null
+      }
+     ]
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "must be a string"
+  },
+  {
+   "name": "unevaluated_entry_reason_not_string",
+   "why": "The reason is prose and its content is not verified, but its TYPE is — a non-string smuggled into a signed field must not canonicalize into something two languages read differently.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "unknown"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": ">=2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": [],
+     "unevaluated_constraints": [
+      {
+       "entity": "dep:x",
+       "constraint": ">=2.0",
+       "reason": 5
+      }
+     ]
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "reason must be a string"
+  },
+  {
+   "name": "declared_gap_on_malformed_rule",
+   "why": "A rule whose own version does not parse is MALFORMED, not unevaluable — no action can repair it, so it is never declarable. Recomputation excludes it; the declaration is therefore phantom.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "unknown"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": ">=abc",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": [],
+     "unevaluated_constraints": [
+      {
+       "entity": "dep:x",
+       "constraint": ">=abc",
+       "reason": "x"
+      }
+     ]
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "no such gap"
+  },
+  {
+   "name": "compat_single_component_not_declarable",
+   "why": "`~=2` is invalid per PEP 440 regardless of the proposed version (checked before the proposed version is looked at). Declaring it as a coverage gap must not launder a malformed rule into an ALLOW.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "unknown"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": "~=2",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": [],
+     "unevaluated_constraints": [
+      {
+       "entity": "dep:x",
+       "constraint": "~=2",
+       "reason": "x"
+      }
+     ]
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "no such gap"
+  },
+  {
+   "name": "unpinned_bare_pin_undeclared",
+   "why": "The bare-pin form of section 3: a version pin with no operator against an unpinned install is just as unevaluable, and just as much a silent skip when undeclared.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "unknown"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": "2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": []
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "does not declare"
+  },
+  {
+   "name": "neq_satisfied_recomputes_allow",
+   "why": "2.5 satisfies !=2.0, so the recorded HALT must recompute as ALLOW. 1.0.0 had no `!=` operator and string-compared the whole expression, agreeing with this wrong verdict — an operator the producer's requirements extractor accepts, mis-evaluated as a bare string.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": null,
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "2.5"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": "!=2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "HALT",
+     "reason_code": "CONSTRAINT_VIOLATION",
+     "conflicting_belief_id": "b1"
+    },
+    "coverage": {
+     "exclusions": []
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "recomputed ALLOW"
+  },
+  {
+   "name": "spaced_operator_target_recomputes",
+   "why": "`>= 2.0` is how humans write pins; the U+0020 around the version is lexed (by hand — strip()/trim() remove different whitespace sets). 1.0 violates it, so the recorded ALLOW must recompute as HALT. Under 1.0.0 this ordinary constraint was malformed.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "1.0"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": ">= 2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": []
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "recomputed HALT"
+  },
+  {
+   "name": "tab_after_operator_is_malformed",
+   "why": "ONLY U+0020 is blessed. A tab after the operator is not lexed — widening the accepted whitespace is exactly how the two languages' strip()/trim() divergence gets back in.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "3.0"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": ">=\t2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": []
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "not a version"
+  },
+  {
    "name": "well_formed_halt_recomputes",
    "why": "Control: unsigned, so it must fail on the SIGNATURE only — proving the corpus's other cases fail for their own stated reason and the predicate still works.",
    "doc": {

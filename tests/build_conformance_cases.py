@@ -266,6 +266,129 @@ case("belief_class_absent",
 # (belief_class = explicit null is already pinned in section 12; ABSENCE was the missing case.)
 
 
+# ── 12c. unevaluable constraints: declared or refused (verifier 1.0.1) ──
+# 1.0.0 refused EVERY unpinned install against a version constraint as malformed — including
+# the honest producer's, which RECORDS the gap in coverage.unevaluated_constraints. The rule
+# now: an unevaluable proposed version is acceptable ONLY when the receipt declares it, and
+# the declaration must recompute exactly. Section 3 above still pins the bypass direction
+# (an UNDECLARED gap refuses, same as ever); these pin the declaration machinery itself, in
+# both failure directions plus every malformed shape of the field.
+
+def _unpinned(proposed="unknown", constraint=">=2.0", **over):
+    return receipt(
+        action={"tool": "pip", "asserts": {"dep:x": proposed}, "resource": "req.txt"},
+        action_binding={"tool": "pip", "args_hash": SHA0, "resource": "req.txt"},
+        beliefs=[belief(entity="dep:x", rule="satisfies", value=constraint)],
+        **over)
+
+
+_DECLARED = {"exclusions": [],
+             "unevaluated_constraints": [
+                 {"entity": "dep:x", "constraint": ">=2.0",
+                  "reason": "no version pinned in the action; the constraint was not evaluated"}]}
+
+case("unpinned_declared_gap_recomputes",
+     _unpinned(coverage=_DECLARED),
+     False, "signature",
+     "Control for the declaration rule: unpinned install, gap correctly declared — every "
+     "predicate check must pass and the ONLY failure is the missing signature, proving the "
+     "cases below fail for their own stated reason. (Signed positives live in the golden "
+     "vectors.) Under 1.0.0 this receipt — the honest producer's actual output — was refused "
+     "as malformed.")
+
+case("phantom_declaration",
+     _unpinned(coverage={"exclusions": [],
+                         "unevaluated_constraints": [
+                             {"entity": "dep:x", "constraint": ">=2.0", "reason": "real"},
+                             {"entity": "dep:other", "constraint": ">=1.0", "reason": "forged"}]}),
+     False, "no such gap",
+     "The declaration names an entity with no unevaluable constraint. An over-declaration "
+     "asserts a check was skipped that actually ran (or never existed) — accepting it would "
+     "let a producer blanket-declare everything and turn the field into noise.")
+
+case("phantom_declaration_evaluable",
+     _unpinned(proposed="2.5", coverage=_DECLARED),
+     False, "no such gap",
+     "The declared entity exists but its constraint WAS evaluable (version pinned): the gap "
+     "did not exist, so the declaration is false and the receipt is refused. The declared set "
+     "must equal recomputation in both directions.")
+
+case("unevaluated_declaration_not_array",
+     _unpinned(coverage={"exclusions": [], "unevaluated_constraints": "lol"}),
+     False, "must be an array",
+     "The field carries semantics as of 1.0.1, so an unreadable shape fails closed instead of "
+     "being skipped — a check that reports instead of gating is how every prior bypass began.")
+
+case("unevaluated_entry_not_object",
+     _unpinned(coverage={"exclusions": [], "unevaluated_constraints": [42]}),
+     False, "is not an object", "Same class, one level down.")
+
+case("unevaluated_entry_constraint_null",
+     _unpinned(coverage={"exclusions": [],
+                         "unevaluated_constraints": [{"entity": "dep:x", "constraint": None}]}),
+     False, "must be a string", "Same class: an explicit null is not a declaration.")
+
+case("unevaluated_entry_reason_not_string",
+     _unpinned(coverage={"exclusions": [],
+                         "unevaluated_constraints": [
+                             {"entity": "dep:x", "constraint": ">=2.0", "reason": 5}]}),
+     False, "reason must be a string",
+     "The reason is prose and its content is not verified, but its TYPE is — a non-string "
+     "smuggled into a signed field must not canonicalize into something two languages read "
+     "differently.")
+
+case("declared_gap_on_malformed_rule",
+     _unpinned(constraint=">=abc",
+               coverage={"exclusions": [],
+                         "unevaluated_constraints": [
+                             {"entity": "dep:x", "constraint": ">=abc", "reason": "x"}]}),
+     False, "no such gap",
+     "A rule whose own version does not parse is MALFORMED, not unevaluable — no action can "
+     "repair it, so it is never declarable. Recomputation excludes it; the declaration is "
+     "therefore phantom.")
+
+case("compat_single_component_not_declarable",
+     _unpinned(constraint="~=2",
+               coverage={"exclusions": [],
+                         "unevaluated_constraints": [
+                             {"entity": "dep:x", "constraint": "~=2", "reason": "x"}]}),
+     False, "no such gap",
+     "`~=2` is invalid per PEP 440 regardless of the proposed version (checked before the "
+     "proposed version is looked at). Declaring it as a coverage gap must not launder a "
+     "malformed rule into an ALLOW.")
+
+case("unpinned_bare_pin_undeclared",
+     _unpinned(constraint="2.0"),
+     False, "does not declare",
+     "The bare-pin form of section 3: a version pin with no operator against an unpinned "
+     "install is just as unevaluable, and just as much a silent skip when undeclared.")
+
+# ── 12d. the operator grammar the 1.0.1 predicate defines ──
+case("neq_satisfied_recomputes_allow",
+     _unpinned(proposed="2.5", constraint="!=2.0",
+               decision={"verdict": "HALT", "reason_code": "CONSTRAINT_VIOLATION",
+                         "conflicting_belief_id": "b1"},
+               post_state_root=None),
+     False, "recomputed ALLOW",
+     "2.5 satisfies !=2.0, so the recorded HALT must recompute as ALLOW. 1.0.0 had no `!=` "
+     "operator and string-compared the whole expression, agreeing with this wrong verdict — "
+     "an operator the producer's requirements extractor accepts, mis-evaluated as a bare "
+     "string.")
+
+case("spaced_operator_target_recomputes",
+     _unpinned(proposed="1.0", constraint=">= 2.0"),
+     False, "recomputed HALT",
+     "`>= 2.0` is how humans write pins; the U+0020 around the version is lexed (by hand — "
+     "strip()/trim() remove different whitespace sets). 1.0 violates it, so the recorded "
+     "ALLOW must recompute as HALT. Under 1.0.0 this ordinary constraint was malformed.")
+
+case("tab_after_operator_is_malformed",
+     _unpinned(proposed="3.0", constraint=">=\t2.0"),
+     False, "not a version",
+     "ONLY U+0020 is blessed. A tab after the operator is not lexed — widening the accepted "
+     "whitespace is exactly how the two languages' strip()/trim() divergence gets back in.")
+
+
 # ── 13. the positive control: a well-formed receipt must still recompute ──
 case("well_formed_halt_recomputes",
      receipt(beliefs=[belief()],

@@ -119,13 +119,34 @@ For each belief in recorded order, skip it unless `status == active` **and**
 Return the **first** conflict found; if none, ALLOW.
 
 **Version comparison is strict.** A version is a non-empty dot-separated sequence of ASCII-digit
-components, each `<= 2**53 - 1`; missing components compare as 0. **No leading or trailing
-whitespace is tolerated** (the two languages strip different sets). A value that is not a version
-makes the constraint **impossible to evaluate**, and the receipt is refused — it does not quietly
-satisfy. Previously `<2.0` was satisfied by `"latest"`, `"main"`, `"v3.0"` and `""`, because
-non-numeric components parsed as 0. Operators: `>=`, `>`, `<=`, `<`, `==`/`=`, `~=`, or a bare
-exact version. `~=` is PEP 440 compatible-release and **requires at least two components** —
-`~=2` is rejected rather than degenerating into an unbounded `>=`.
+components, each `<= 2**53 - 1`; missing components compare as 0. Nothing coerces: previously
+`<2.0` was satisfied by `"latest"`, `"main"`, `"v3.0"` and `""`, because non-numeric components
+parsed as 0. Operators: `>=`, `>`, `<=`, `<`, `==`/`=`, `!=`, `~=`, or a bare exact version.
+`~=` is PEP 440 compatible-release and **requires at least two components** — `~=2` is rejected
+rather than degenerating into an unbounded `>=`, and that arity is checked before the proposed
+version is even looked at, so a malformed rule is malformed regardless of the action.
+
+**Whitespace (as of 1.0.1):** the version after an operator may be surrounded by U+0020 —
+`>= 2.0` is how humans write pins — lexed by hand, because `strip()`/`trim()` remove different
+whitespace sets in the two reference languages. ONLY U+0020; a tab is not a version character.
+The operator itself must be flush-left, and the PROPOSED version is taken verbatim.
+
+**The two failure modes are different facts (as of 1.0.1):**
+
+- A **constraint** whose version does not parse (`>=abc`, `~=2`) is a defect in the RULE — no
+  action can repair it, so the receipt is **malformed**, always.
+- A **proposed** version that does not parse against a well-formed version bound (an unpinned
+  `pip install numpy` against `>=2.0`) is **not evaluable**. The receipt must DECLARE that gap
+  in `coverage.unevaluated_constraints` (entries `{entity, constraint, reason?}`), and the
+  declared set is part of the verified claim: the verifier recomputes it over every active
+  deterministic `satisfies` belief whose entity is asserted — a full pass, independent of the
+  first-conflict short-circuit — and refuses the receipt if the two sets differ in EITHER
+  direction. An undeclared gap is a silent skip (the gate bypass 1.0.0's refusal existed to
+  prevent); an over-declaration asserts a check was skipped that actually ran. A declared,
+  recomputed gap does not violate the constraint, and conformant verifiers surface it
+  (`~ not evaluated: …`) rather than printing a VERIFIED indistinguishable from a fully-checked
+  one. 1.0.0 refused every such receipt as malformed, including the honest producer's; 1.0.1
+  accepts exactly the declared-and-true subset.
 
 ## 5. Signature
 

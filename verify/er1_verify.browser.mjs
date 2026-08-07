@@ -262,6 +262,25 @@ export function validateReceipt(r) {
       if (rule !== "excludes") requireStr(b, "value", `beliefs[${i}]`);
     }
   });
+  // coverage.unevaluated_constraints carries semantics as of 1.0.1 — shape must be exact
+  // when the name is present; an absent field is an empty declaration. See er1_verify.mjs.
+  if (isPlainObject(r.coverage) && "unevaluated_constraints" in r.coverage) {
+    const entries = r.coverage.unevaluated_constraints;
+    if (!Array.isArray(entries)) {
+      throw new Er1MalformedReceipt("coverage.unevaluated_constraints must be an array");
+    }
+    entries.forEach((entry, i) => {
+      if (!isPlainObject(entry)) {
+        throw new Er1MalformedReceipt(`coverage.unevaluated_constraints[${i}] is not an object`);
+      }
+      requireStr(entry, "entity", `coverage.unevaluated_constraints[${i}]`, true);
+      requireStr(entry, "constraint", `coverage.unevaluated_constraints[${i}]`);
+      if ("reason" in entry && typeof entry.reason !== "string") {
+        throw new Er1MalformedReceipt(
+          `coverage.unevaluated_constraints[${i}].reason must be a string`);
+      }
+    });
+  }
   if (!isPlainObject(r.decision)) throw new Er1MalformedReceipt("decision must be an object");
   if (!VERDICTS.has(r.decision.verdict)) {
     throw new Er1MalformedReceipt(
@@ -306,26 +325,116 @@ function compatible(proposed, constraint) {
   for (let i = 0; i < prefix.length; i++) if ((proposed[i] ?? 0) !== prefix[i]) return false;
   return true;
 }
-function satisfies(proposedRaw, constraintRaw) {
+// Drop leading/trailing U+0020 — and ONLY U+0020; see er1_verify.mjs for the note.
+function lexSp(s) {
+  let i = 0, j = s.length;
+  while (i < j && s[i] === " ") i++;
+  while (j > i && s[j - 1] === " ") j--;
+  return s.slice(i, j);
+}
+
+const OPS = [">=", "<=", "==", "!=", "~=", ">", "<", "="];
+
+// [op, parsedTarget] for an operator constraint; [null, parsedOrNull] for a bare one.
+// Throws when the RULE itself is unevaluable — see er1_verify.mjs for the full note.
+function constraintTarget(constraintRaw) {
   const c = typeof constraintRaw === "string" ? constraintRaw : String(constraintRaw);
-  for (const op of [">=", "<=", "==", "~=", ">", "<", "="]) {
+  for (const op of OPS) {
     if (c.startsWith(op)) {
-      const target = parseVer(c.slice(op.length));
-      const proposed = parseVer(proposedRaw);
-      if (target === null || proposed === null) {
+      const target = parseVer(lexSp(c.slice(op.length)));
+      if (target === null) {
         throw new Er1MalformedReceipt(
-          `cannot evaluate ${op} between ${JSON.stringify(String(proposedRaw))} and ${JSON.stringify(c)}: not versions`);
+          `cannot evaluate ${op} against ${JSON.stringify(c)}: the constraint is not a version`);
       }
-      if (op === "~=") return compatible(proposed, target);
-      const cmp = verCmp(proposed, target);
-      return { ">=": cmp >= 0, ">": cmp > 0, "<=": cmp <= 0, "<": cmp < 0,
-               "==": cmp === 0, "=": cmp === 0 }[op];
+      if (op === "~=" && target.length < 2) {
+        throw new Er1MalformedReceipt("~= needs at least two version components");
+      }
+      return [op, target];
     }
   }
-  const target = parseVer(c), proposed = parseVer(proposedRaw);
-  if (target === null || proposed === null) return String(proposedRaw) === c;
-  return verCmp(proposed, target) === 0;
+  return [null, parseVer(c)];
 }
+
+// True iff the constraint names a version bound but the proposed version does not parse —
+// the ONE case a receipt may declare in coverage.unevaluated_constraints instead of failing.
+function unevaluable(proposedRaw, constraintRaw) {
+  let target;
+  try {
+    [, target] = constraintTarget(constraintRaw);
+  } catch (e) {
+    if (e instanceof Er1MalformedReceipt) return false;
+    throw e;
+  }
+  if (target === null) return false;
+  return parseVer(proposedRaw) === null;
+}
+
+function satisfies(proposedRaw, constraintRaw) {
+  const [op, target] = constraintTarget(constraintRaw);
+  const proposed = parseVer(proposedRaw);
+  if (op === null) {
+    // Bare constraint — see er1_verify.mjs for the note. An unevaluable version pin is
+    // enforced-declared by checkUnevaluated, so returning true never lets a silent skip by.
+    if (target === null) {
+      return String(proposedRaw) === (typeof constraintRaw === "string" ? constraintRaw : String(constraintRaw));
+    }
+    if (proposed === null) return true;
+    return verCmp(proposed, target) === 0;
+  }
+  if (proposed === null) return true;  // declared-unevaluable; enforced by checkUnevaluated
+  if (op === "~=") return compatible(proposed, target);
+  const cmp = verCmp(proposed, target);
+  return { ">=": cmp >= 0, ">": cmp > 0, "<=": cmp <= 0, "<": cmp < 0,
+           "==": cmp === 0, "=": cmp === 0, "!=": cmp !== 0 }[op];
+}
+
+// Pair machinery + the exact-set declaration check — mirrors er1_verify.mjs byte-for-byte
+// in behaviour; see er1_verify.py::_check_unevaluated for the full rationale.
+const pairKey = (ent, val) => JSON.stringify([ent, val]);
+const pairCmp = (a, b) =>
+  a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0;
+
+function recomputeUnevaluated(beliefs, asserts) {
+  const out = new Map();
+  for (const b of beliefs) {
+    if (b.status !== "active" || b.source_kind !== "deterministic") continue;
+    if (b.rule === "satisfies" && Object.prototype.hasOwnProperty.call(asserts, b.entity)) {
+      if (unevaluable(String(asserts[b.entity]), b.value)) {
+        out.set(pairKey(b.entity, b.value), [b.entity, b.value]);
+      }
+    }
+  }
+  return out;
+}
+
+function checkUnevaluated(beliefs, asserts, coverage) {
+  const recomputed = recomputeUnevaluated(beliefs, asserts);
+  const declared = new Map();
+  if (isPlainObject(coverage)) {
+    for (const entry of coverage.unevaluated_constraints || []) {
+      declared.set(pairKey(entry.entity, entry.constraint), [entry.entity, entry.constraint]);
+    }
+  }
+  const undeclared = [...recomputed.entries()]
+    .filter(([k]) => !declared.has(k)).map(([, p]) => p).sort(pairCmp);
+  if (undeclared.length) {
+    const [ent, val] = undeclared[0];
+    throw new Er1MalformedReceipt(
+      `constraint ${JSON.stringify(val)} on ${JSON.stringify(ent)} is not evaluable (no ` +
+      `version pinned in the action) and the receipt does not declare it in ` +
+      `coverage.unevaluated_constraints`);
+  }
+  const phantom = [...declared.entries()]
+    .filter(([k]) => !recomputed.has(k)).map(([, p]) => p).sort(pairCmp);
+  if (phantom.length) {
+    const [ent, val] = phantom[0];
+    throw new Er1MalformedReceipt(
+      `coverage.unevaluated_constraints declares ${JSON.stringify(val)} on ` +
+      `${JSON.stringify(ent)} but recomputation finds no such gap`);
+  }
+  return recomputed;
+}
+
 function conflict(beliefs, asserts) {
   // Identity is normalized on both sides — canonical JSON normalizes these strings before they
   // are signed, so comparing raw would let one signed byte-string carry two identities.
@@ -452,6 +561,10 @@ export async function verify(r, trustedKeys = null) {
   checks.state_root = r.pre_state_root === await sha256Hex(canonicalBytes(beliefs));
   if (!checks.state_root) errors.push("pre_state_root mismatch");
 
+  // Any constraint that is present but unevaluable must be declared, and every
+  // declaration must be real (throws Er1MalformedReceipt if not).
+  const unevaluated = checkUnevaluated(beliefs, a.asserts, r.coverage);
+
   const c = conflict(beliefs, a.asserts);
   const recomputed = c !== null ? "HALT" : "ALLOW";
   const recorded = r.decision;
@@ -473,7 +586,12 @@ export async function verify(r, trustedKeys = null) {
     if (!checks.post_state_root) errors.push("post_state_root: must equal pre_state_root on ALLOW");
   }
 
-    return { ok: errors.length === 0, recomputedVerdict: recomputed, checks, errors, signer };
+    const out = { ok: errors.length === 0, recomputedVerdict: recomputed, checks, errors, signer };
+    if (unevaluated.size) {
+      out.unevaluated_constraints = [...unevaluated.values()].sort(pairCmp)
+        .map(([ent, val]) => ({ entity: ent, constraint: val }));
+    }
+    return out;
   } catch (exc) {
     return { ok: false, recomputedVerdict: null, checks,
              errors: [...errors, `malformed receipt: ${exc.message}`], signer };

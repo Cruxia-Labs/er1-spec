@@ -72,7 +72,15 @@
       "properties": {
         "certified_modules": { "type": "array", "items": { "type": "string" } },
         "exclusions": { "type": "array", "items": { "type": "string" },
-          "description": "What this receipt does NOT certify (e.g. \"nl_extraction\" — advisory constraints never gate)." }
+          "description": "What this receipt does NOT certify (e.g. \"nl_extraction\" — advisory constraints never gate)." },
+        "unevaluated_constraints": { "type": "array",
+          "items": { "type": "object", "required": ["entity", "constraint"],
+            "properties": {
+              "entity": { "type": "string" },
+              "constraint": { "type": "string" },
+              "reason": { "type": "string", "description": "Human prose; type-checked, content not verified." }
+            } },
+          "description": "Constraints PRESENT but not evaluable (e.g. an unpinned install against a version constraint). As of verifier 1.0.1 this set is recomputed and must match exactly: an undeclared gap and a declared-but-absent gap are both malformed. Present only when non-empty, so receipts that evaluated everything are unchanged byte for byte." }
       }
     },
     "operator_version": { "type": "string" },

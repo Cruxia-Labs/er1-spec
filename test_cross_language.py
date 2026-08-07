@@ -30,7 +30,7 @@ def _run(*args: str) -> subprocess.CompletedProcess:
 def test_js_verifies_every_golden_vector():
     r = _run("golden_vectors.json")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert r.stdout.count("VERIFIED ✓") == 6
+    assert r.stdout.count("VERIFIED ✓") == 10
     assert "FAILED" not in r.stdout
 
 
