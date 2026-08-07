@@ -440,7 +440,10 @@ def _compatible(proposed, constraint):
         return False
     if len(constraint) < 2:
         # PEP 440: ~=2 is not a valid compatible-release clause — it would degenerate into an
-        # unbounded >=2 and the pin would never gate anything.
+        # unbounded >=2 and the pin would never gate anything. As of 1.0.1 _constraint_target
+        # raises first (the arity must not depend on the action), so this copy is unreachable
+        # from _satisfies — KEPT as defense-in-depth, not dead code to delete: this module's
+        # own corpus documents what happens when a redundant guard is removed for tidiness.
         raise Er1MalformedReceipt("~= needs at least two version components")
     prefix = constraint[:-1]
     pv = proposed + (0,) * (len(prefix) - len(proposed))

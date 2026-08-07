@@ -335,6 +335,14 @@ MUTATIONS = [
         "zero records.",
     ),
     Mutation(
+        "mjs_declaration_check_skipped",
+        "er1_verify.mjs",
+        "    const unevaluated = checkUnevaluated(beliefs, a.asserts, r.coverage);\n",
+        "    const unevaluated = new Map();\n",
+        "the same call-site skip in the Node CLI — the external reviewer noted the asymmetry: "
+        "the Python call-site had a mutation and the JS one did not.",
+    ),
+    Mutation(
         "py_neq_operator_dropped",
         "er1_verify.py",
         '_OPS = (">=", "<=", "==", "!=", "~=", ">", "<", "=")\n',
