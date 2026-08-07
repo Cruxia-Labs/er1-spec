@@ -282,16 +282,16 @@ MUTATIONS = [
     Mutation(
         "py_undeclared_gap_allowed",
         "er1_verify.py",
-        "    if undeclared:\n",
-        "    if False and undeclared:\n",
+        "        if undeclared:\n",
+        "        if False and undeclared:\n",
         "the undeclared-gap refusal. Without it an unpinned install against a version pin is a "
         "silent skip that verifies as ALLOW — the exact bypass corpus section 3 pins.",
     ),
     Mutation(
         "mjs_undeclared_gap_allowed",
         "er1_verify.mjs",
-        "  if (undeclared.length) {\n",
-        "  if (false && undeclared.length) {\n",
+        "    if (undeclared.length) {\n",
+        "    if (false && undeclared.length) {\n",
         "the same silent-skip bypass in the Node CLI.",
     ),
     Mutation(
@@ -312,7 +312,7 @@ MUTATIONS = [
     Mutation(
         "py_unevaluable_never",
         "er1_verify.py",
-        "    if target is None:\n        return False\n    return _parse_ver(proposed_raw) is None\n",
+        "    if op is None:\n        return False\n    return _parse_ver(proposed_raw) is None\n",
         "    return False\n",
         "the unevaluable classification itself. With it gone the declared set recomputes empty, "
         "yet _satisfies still returns True for an unparseable proposed version — so every "
@@ -321,14 +321,14 @@ MUTATIONS = [
     Mutation(
         "mjs_unevaluable_never",
         "er1_verify.mjs",
-        "  if (target === null) return false;\n  return parseVer(proposedRaw) === null;\n",
+        "  if (op === null) return false;\n  return parseVer(proposedRaw) === null;\n",
         "  return false;\n",
         "the same classification in the Node CLI.",
     ),
     Mutation(
         "py_declaration_check_skipped",
         "er1_verify.py",
-        '        unevaluated = _check_unevaluated(beliefs, asserts, receipt.get("coverage"))\n',
+        '        unevaluated = _check_unevaluated(beliefs, asserts, receipt.get("coverage"), recomputed)\n',
         "        unevaluated = set()\n",
         "the whole declaration check at the verify() call site — the guard can be perfect and "
         "still guard nothing if nobody calls it, which is how verify_chain shipped green on "
@@ -337,7 +337,7 @@ MUTATIONS = [
     Mutation(
         "mjs_declaration_check_skipped",
         "er1_verify.mjs",
-        "    const unevaluated = checkUnevaluated(beliefs, a.asserts, r.coverage);\n",
+        "    const unevaluated = checkUnevaluated(beliefs, a.asserts, r.coverage, recomputed);\n",
         "    const unevaluated = new Map();\n",
         "the same call-site skip in the Node CLI — the external reviewer noted the asymmetry: "
         "the Python call-site had a mutation and the JS one did not.",
@@ -383,6 +383,95 @@ MUTATIONS = [
         "version becomes declarable-unevaluable and verifies — a malformed rule laundered into "
         "an ALLOW through the coverage field. (_compatible still raises for pinned versions, "
         "which is why the check must fire before the proposed version is looked at.)",
+    ),
+
+    # ── the two review-driven boundaries of the declaration rule ──
+    Mutation(
+        "py_halt_tolerance_widened",
+        "er1_verify.py",
+        '    if recomputed_verdict == "ALLOW":\n',
+        "    if False:\n",
+        "the undeclared-gap refusal entirely (tolerance widened from HALT-only to always). "
+        "Every silent-skip ALLOW then verifies — corpus section 3 comes straight back.",
+    ),
+    Mutation(
+        "py_halt_tolerance_removed",
+        "er1_verify.py",
+        '    if recomputed_verdict == "ALLOW":\n',
+        "    if True:\n",
+        "the ALLOW-only asymmetry (refusal applied on HALT too — the first draft's behavior). "
+        "The reviewer's legacy counterexample breaks: a 1.0.0-verified HALT receipt with an "
+        "undeclared trailing gap is refused, violating the compatibility guarantee. Caught by "
+        "the signed legacy golden vector.",
+    ),
+    Mutation(
+        "mjs_halt_tolerance_removed",
+        "er1_verify.mjs",
+        '  if (recomputedVerdict === "ALLOW") {\n',
+        "  if (true) {\n",
+        "the same asymmetry removal in the Node CLI.",
+    ),
+    Mutation(
+        "py_bare_pin_reclassified",
+        "er1_verify.py",
+        "    if op is None:\n        return False\n    return _parse_ver(proposed_raw) is None\n",
+        "    return _parse_ver(proposed_raw) is None\n",
+        "the operator-form boundary of unevaluable — the first draft's bare-pin "
+        "reclassification, which flipped a published protective refusal into a verifying "
+        "ALLOW. Caught by bare_pin_declared_is_phantom.",
+    ),
+    Mutation(
+        "mjs_bare_pin_reclassified",
+        "er1_verify.mjs",
+        "  if (op === null) return false;\n  return parseVer(proposedRaw) === null;\n",
+        "  return parseVer(proposedRaw) === null;\n",
+        "the same reclassification in the Node CLI.",
+    ),
+    Mutation(
+        "mjs_space_lex_dropped",
+        "er1_verify.mjs",
+        "      const target = parseVer(lexSp(c.slice(op.length)));\n",
+        "      const target = parseVer(c.slice(op.length));\n",
+        "the U+0020 lexing in the Node CLI (mirroring py_space_lex_dropped, per the external "
+        "reviewer's note that the JS files lacked these four mutants).",
+    ),
+    Mutation(
+        "mjs_space_lex_greedy",
+        "er1_verify.mjs",
+        '  while (i < j && s[i] === " ") i++;\n',
+        '  while (i < j && (s[i] === " " || s[i] === "\\t")) i++;\n',
+        "the U+0020-ONLY rule in the Node CLI.",
+    ),
+    Mutation(
+        "mjs_compat_single_component_declarable",
+        "er1_verify.mjs",
+        '      if (op === "~=" && target.length < 2) {\n'
+        '        throw new Er1MalformedReceipt("~= needs at least two version components");\n'
+        "      }\n",
+        "",
+        "the action-independent ~= arity check in the Node CLI.",
+    ),
+    Mutation(
+        "browser_declaration_check_skipped",
+        "verify/er1_verify.browser.mjs",
+        "  const unevaluated = checkUnevaluated(beliefs, a.asserts, r.coverage, recomputed);\n",
+        "  const unevaluated = new Map();\n",
+        "the whole declaration check in the BROWSER build — the copy a stranger actually "
+        "runs. The browser corpus run scores this without a real browser.",
+    ),
+    Mutation(
+        "browser_bare_pin_reclassified",
+        "verify/er1_verify.browser.mjs",
+        "  if (op === null) return false;\n  return parseVer(proposedRaw) === null;\n",
+        "  return parseVer(proposedRaw) === null;\n",
+        "the bare-pin reclassification in the browser build.",
+    ),
+    Mutation(
+        "browser_halt_tolerance_removed",
+        "verify/er1_verify.browser.mjs",
+        '  if (recomputedVerdict === "ALLOW") {\n',
+        "  if (true) {\n",
+        "the asymmetry removal in the browser build.",
     ),
 ]
 

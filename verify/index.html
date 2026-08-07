@@ -24,6 +24,7 @@
   .verified { color: #176e2e; } .failed { color: #a11212; } .unsupported { color: #8a5a00; }
   ul { margin: .2rem 0 .6rem 1.4rem; }
   li.err { color: #a11212; }
+  li.gap { color: #8a5a00; }   /* a declared coverage gap: verified, but not fully checked */
   .item { margin: .5rem 0; padding: .4rem .6rem; background: #fff; border: 1px solid #ddd; }
   small { color: #666; }
 </style>
@@ -131,6 +132,14 @@ Accepts a single receipt or a <code>golden_vectors.json</code> bundle.</small></
           `</small>` +
           (res.errors.length
             ? "<ul>" + res.errors.map((e) => `<li class="err">! ${esc(e)}</li>`).join("") + "</ul>"
+            : "") +
+          // Same rule as both CLIs: a VERIFIED with a declared coverage gap must not render
+          // identically to a fully-checked one — "checked and passed" and "could not check"
+          // are different facts, and this page is the surface a relying party actually uses.
+          ((res.unevaluated_constraints || []).length
+            ? "<ul>" + res.unevaluated_constraints.map((u) =>
+                `<li class="gap">~ not evaluated: ${esc(JSON.stringify(u.constraint))} on ` +
+                `${esc(JSON.stringify(u.entity))} (no version pinned in the action)</li>`).join("") + "</ul>"
             : "");
       } catch (e) {
         const cls = e instanceof Er1UnsupportedCryptoError ? "unsupported" : "failed";

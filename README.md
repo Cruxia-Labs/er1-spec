@@ -34,18 +34,27 @@ vectors, and a conformance suite that needs nothing else — `python -m pytest t
 
 ## What 1.0.1 changes
 
-1.0.0 called an ordinary receipt malformed: an **unpinned install against a version constraint**
+1.0.0 called an ordinary receipt malformed: an **unpinned install against an operator version constraint**
 (`pip install numpy` where a `satisfies dep:numpy >=2.0` rule exists) has no version to compare, and the
 verifier refused it — including from a producer that honestly records the gap. As of 1.0.1 that gap is part
 of the verified claim: the receipt must declare it in `coverage.unevaluated_constraints`, the verifier
-**recomputes the declared set** and refuses any mismatch in either direction, and a verified receipt with a
-declared gap prints it (`~ not evaluated: …`) instead of a VERIFIED indistinguishable from a fully-checked
-one. Undeclared gaps still refuse exactly as 1.0.0 did — the change accepts only the declared-and-true.
+**recomputes the declared set**, and a verified receipt with a declared gap prints it (`~ not evaluated: …`)
+instead of a VERIFIED indistinguishable from a fully-checked one. A declaration that recomputation cannot
+find is refused, always. An UNDECLARED gap is refused exactly where it protects something — a receipt whose
+recomputed verdict is ALLOW (the silent-skip bypass 1.0.0's refusal existed to prevent); on a recomputed
+HALT a missing declaration is tolerated, because an unevaluable constraint can never be the conflict and
+1.0.0 verified HALT receipts with unevaluated trailing constraints.
+
+Two spellings, two meanings, both deliberate: `==2.0` is the gap-declarable pin; a **bare** pin (`2.0`) is
+the strict must-pin spelling — an unpinned action *violates* it, exactly as 1.0.0 evaluated it.
 
 Also in the `satisfies` grammar: the `!=` operator (1.0.0 mis-evaluated it as a bare string), and U+0020
 around the version after an operator (`>= 2.0` was malformed to 1.0.0). A constraint whose own version does
 not parse (`>=abc`, `~=2`) stays malformed — that is a defect in the rule, and no action can repair it.
-Every receipt 1.0.0 verified still verifies, byte for byte; the frozen vectors grew from 6 to 10.
+
+Every receipt 1.0.0 verified still verifies, byte for byte — except receipts that already carried a
+`coverage.unevaluated_constraints` field, which had no defined meaning before 1.0.1 and now fails closed if
+its shape or content does not recompute. The frozen vectors grew from 6 to 12.
 Full semantics: [`CONFORMANCE.md`](https://github.com/Cruxia-Labs/er1-spec/blob/v1.0.1/CONFORMANCE.md) §4.
 
 ## What's in the spec repo

@@ -264,7 +264,9 @@ export function validateReceipt(r) {
   });
   // coverage.unevaluated_constraints carries semantics as of 1.0.1 — shape must be exact
   // when the name is present; an absent field is an empty declaration. See er1_verify.mjs.
-  if (isPlainObject(r.coverage) && "unevaluated_constraints" in r.coverage) {
+  // hasOwnProperty, not `in`: `in` walks the prototype chain — see er1_verify.mjs.
+  if (isPlainObject(r.coverage)
+      && Object.prototype.hasOwnProperty.call(r.coverage, "unevaluated_constraints")) {
     const entries = r.coverage.unevaluated_constraints;
     if (!Array.isArray(entries)) {
       throw new Er1MalformedReceipt("coverage.unevaluated_constraints must be an array");
@@ -358,14 +360,16 @@ function constraintTarget(constraintRaw) {
 // True iff the constraint names a version bound but the proposed version does not parse —
 // the ONE case a receipt may declare in coverage.unevaluated_constraints instead of failing.
 function unevaluable(proposedRaw, constraintRaw) {
-  let target;
+  // OPERATOR-FORM ONLY — the bare pin stays exactly 1.0.0 (the strict must-pin spelling,
+  // never a declarable gap). See er1_verify.mjs / er1_verify.py for the full note.
+  let op;
   try {
-    [, target] = constraintTarget(constraintRaw);
+    [op] = constraintTarget(constraintRaw);
   } catch (e) {
     if (e instanceof Er1MalformedReceipt) return false;
     throw e;
   }
-  if (target === null) return false;
+  if (op === null) return false;
   return parseVer(proposedRaw) === null;
 }
 
@@ -373,12 +377,11 @@ function satisfies(proposedRaw, constraintRaw) {
   const [op, target] = constraintTarget(constraintRaw);
   const proposed = parseVer(proposedRaw);
   if (op === null) {
-    // Bare constraint — see er1_verify.mjs for the note. An unevaluable version pin is
-    // enforced-declared by checkUnevaluated, so returning true never lets a silent skip by.
-    if (target === null) {
+    // Bare constraint — UNCHANGED from 1.0.0, deliberately: the strict must-pin spelling.
+    // See er1_verify.mjs for the note.
+    if (target === null || proposed === null) {
       return String(proposedRaw) === (typeof constraintRaw === "string" ? constraintRaw : String(constraintRaw));
     }
-    if (proposed === null) return true;
     return verCmp(proposed, target) === 0;
   }
   if (proposed === null) return true;  // declared-unevaluable; enforced by checkUnevaluated
@@ -407,7 +410,8 @@ function recomputeUnevaluated(beliefs, asserts) {
   return out;
 }
 
-function checkUnevaluated(beliefs, asserts, coverage) {
+function checkUnevaluated(beliefs, asserts, coverage, recomputedVerdict) {
+  // Undeclared-gap refusal on ALLOW only; phantom refusal always. See er1_verify.mjs.
   const recomputed = recomputeUnevaluated(beliefs, asserts);
   const declared = new Map();
   if (isPlainObject(coverage)) {
@@ -415,14 +419,16 @@ function checkUnevaluated(beliefs, asserts, coverage) {
       declared.set(pairKey(entry.entity, entry.constraint), [entry.entity, entry.constraint]);
     }
   }
-  const undeclared = [...recomputed.entries()]
-    .filter(([k]) => !declared.has(k)).map(([, p]) => p).sort(pairCmp);
-  if (undeclared.length) {
-    const [ent, val] = undeclared[0];
-    throw new Er1MalformedReceipt(
-      `constraint ${JSON.stringify(val)} on ${JSON.stringify(ent)} is not evaluable (no ` +
-      `version pinned in the action) and the receipt does not declare it in ` +
-      `coverage.unevaluated_constraints`);
+  if (recomputedVerdict === "ALLOW") {
+    const undeclared = [...recomputed.entries()]
+      .filter(([k]) => !declared.has(k)).map(([, p]) => p).sort(pairCmp);
+    if (undeclared.length) {
+      const [ent, val] = undeclared[0];
+      throw new Er1MalformedReceipt(
+        `constraint ${JSON.stringify(val)} on ${JSON.stringify(ent)} is not evaluable (no ` +
+        `version pinned in the action) and the receipt does not declare it in ` +
+        `coverage.unevaluated_constraints`);
+    }
   }
   const phantom = [...declared.entries()]
     .filter(([k]) => !recomputed.has(k)).map(([, p]) => p).sort(pairCmp);
@@ -561,12 +567,11 @@ export async function verify(r, trustedKeys = null) {
   checks.state_root = r.pre_state_root === await sha256Hex(canonicalBytes(beliefs));
   if (!checks.state_root) errors.push("pre_state_root mismatch");
 
-  // Any constraint that is present but unevaluable must be declared, and every
-  // declaration must be real (throws Er1MalformedReceipt if not).
-  const unevaluated = checkUnevaluated(beliefs, a.asserts, r.coverage);
-
   const c = conflict(beliefs, a.asserts);
   const recomputed = c !== null ? "HALT" : "ALLOW";
+
+  // After the verdict recomputes (the undeclared-gap rule needs it) — see er1_verify.mjs.
+  const unevaluated = checkUnevaluated(beliefs, a.asserts, r.coverage, recomputed);
   const recorded = r.decision;
   checks.verdict = recomputed === recorded.verdict;
   if (!checks.verdict) errors.push(`verdict: recomputed ${recomputed} vs recorded ${JSON.stringify(recorded.verdict)}`);

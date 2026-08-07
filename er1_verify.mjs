@@ -198,7 +198,11 @@ export function validateReceipt(r) {
   // checkUnevaluated recomputes), so when the name is present its shape must be exact.
   // Everything else under coverage stays unread, and an absent field is an empty declaration —
   // receipts that evaluated every constraint are untouched, byte for byte.
-  if (isPlainObject(r.coverage) && "unevaluated_constraints" in r.coverage) {
+  // hasOwnProperty, not `in`: `in` walks the prototype chain, so a polluted
+  // Object.prototype.unevaluated_constraints made the same signed bytes malformed here
+  // and verified in Python (dicts have no prototype). An external reviewer's find.
+  if (isPlainObject(r.coverage)
+      && Object.prototype.hasOwnProperty.call(r.coverage, "unevaluated_constraints")) {
     const entries = r.coverage.unevaluated_constraints;
     if (!Array.isArray(entries)) {
       throw new Er1MalformedReceipt("coverage.unevaluated_constraints must be an array");
@@ -306,14 +310,20 @@ function constraintTarget(constraintRaw) {
 // A constraint whose own version is malformed is not unevaluable, it is malformed; a bare
 // non-version constraint is always evaluable (exact string equality).
 function unevaluable(proposedRaw, constraintRaw) {
-  let target;
+  // OPERATOR-FORM ONLY, and that boundary is the compatibility guarantee: 1.0.0 RAISED on
+  // every operator cell where the proposed version failed to parse, so giving those cells
+  // meaning breaks no verified receipt. The bare branch never raised — a bare pin against
+  // an unparseable version evaluated (string equality -> False -> HALT) and receipts
+  // verified both ways on that reasoning. The bare pin stays exactly 1.0.0: the STRICT
+  // must-pin spelling; `==X` is the gap-declarable spelling. See er1_verify.py.
+  let op;
   try {
-    [, target] = constraintTarget(constraintRaw);
+    [op] = constraintTarget(constraintRaw);
   } catch (e) {
     if (e instanceof Er1MalformedReceipt) return false;
     throw e;
   }
-  if (target === null) return false;
+  if (op === null) return false;
   return parseVer(proposedRaw) === null;
 }
 
@@ -321,15 +331,13 @@ function satisfies(proposedRaw, constraintRaw) {
   const [op, target] = constraintTarget(constraintRaw);
   const proposed = parseVer(proposedRaw);
   if (op === null) {
-    // No operator: exact equality of the version, or — when neither side is a version —
-    // exact string equality, which is well defined and language-independent. A version
-    // pin against an unparseable proposed version is not evaluable and cannot gate;
-    // checkUnevaluated has already required the receipt to DECLARE that gap, so
-    // returning true here never lets a silent skip through.
-    if (target === null) {
+    // No operator — UNCHANGED from 1.0.0, deliberately (see unevaluable above): exact
+    // equality of the version; when either side is not a version, exact string equality.
+    // A bare pin against an unparseable proposed version therefore evaluates (to false in
+    // every real case): the strict must-pin spelling, never a declarable gap.
+    if (target === null || proposed === null) {
       return String(proposedRaw) === (typeof constraintRaw === "string" ? constraintRaw : String(constraintRaw));
     }
-    if (proposed === null) return true;
     return verCmp(proposed, target) === 0;
   }
   if (proposed === null) return true;  // declared-unevaluable; enforced by checkUnevaluated
@@ -368,7 +376,14 @@ function recomputeUnevaluated(beliefs, asserts) {
 // silent skip (the gate bypass the conformance corpus pins); an over-declaration asserts a gap
 // that did not exist. Both are malformed; the field is as recomputable as the verdict itself.
 // See er1_verify.py::_check_unevaluated for the full note. Returns the recomputed pairs.
-function checkUnevaluated(beliefs, asserts, coverage) {
+function checkUnevaluated(beliefs, asserts, coverage, recomputedVerdict) {
+  // The undeclared-gap refusal applies ONLY when the recomputed verdict is ALLOW: the
+  // declaration distinguishes "checked and passed" from "could not check", and on a HALT
+  // there is no pass to protect — an unevaluable constraint can never BE the conflict.
+  // This is what keeps the compatibility guarantee airtight: 1.0.0 verified HALT receipts
+  // whose short-circuited conflict left a trailing gap unevaluated (external reviewer's
+  // counterexample), and a 1.0.0-verified ALLOW receipt provably has no gaps. Phantom
+  // declarations are refused under both verdicts. See er1_verify.py::_check_unevaluated.
   const recomputed = recomputeUnevaluated(beliefs, asserts);
   const declared = new Map();
   if (isPlainObject(coverage)) {
@@ -376,14 +391,16 @@ function checkUnevaluated(beliefs, asserts, coverage) {
       declared.set(pairKey(entry.entity, entry.constraint), [entry.entity, entry.constraint]);
     }
   }
-  const undeclared = [...recomputed.entries()]
-    .filter(([k]) => !declared.has(k)).map(([, p]) => p).sort(pairCmp);
-  if (undeclared.length) {
-    const [ent, val] = undeclared[0];
-    throw new Er1MalformedReceipt(
-      `constraint ${JSON.stringify(val)} on ${JSON.stringify(ent)} is not evaluable (no ` +
-      `version pinned in the action) and the receipt does not declare it in ` +
-      `coverage.unevaluated_constraints`);
+  if (recomputedVerdict === "ALLOW") {
+    const undeclared = [...recomputed.entries()]
+      .filter(([k]) => !declared.has(k)).map(([, p]) => p).sort(pairCmp);
+    if (undeclared.length) {
+      const [ent, val] = undeclared[0];
+      throw new Er1MalformedReceipt(
+        `constraint ${JSON.stringify(val)} on ${JSON.stringify(ent)} is not evaluable (no ` +
+        `version pinned in the action) and the receipt does not declare it in ` +
+        `coverage.unevaluated_constraints`);
+    }
   }
   const phantom = [...declared.entries()]
     .filter(([k]) => !recomputed.has(k)).map(([, p]) => p).sort(pairCmp);
@@ -536,12 +553,13 @@ export function verify(r, trustedKeys = null) {
     checks.state_root = r.pre_state_root === sha256Hex(canonicalBytes(beliefs));
     if (!checks.state_root) errors.push("pre_state_root mismatch");
 
-    // Before the verdict recomputes: any constraint that is present but unevaluable must
-    // be declared, and every declaration must be real (throws Er1MalformedReceipt if not).
-    const unevaluated = checkUnevaluated(beliefs, a.asserts, r.coverage);
-
     const c = conflict(beliefs, a.asserts);
     const recomputed = c !== null ? "HALT" : "ALLOW";
+
+    // After the verdict recomputes (the undeclared-gap rule needs it): on ALLOW every
+    // present-but-unevaluable constraint must be declared, and under both verdicts every
+    // declaration must be real (throws Er1MalformedReceipt if not).
+    const unevaluated = checkUnevaluated(beliefs, a.asserts, r.coverage, recomputed);
     const recorded = r.decision;
     checks.verdict = recomputed === recorded.verdict;
     if (!checks.verdict) {
@@ -854,9 +872,11 @@ function main(argv) {
       // A verified receipt with a declared coverage gap must not print identically to a
       // fully-checked one — "checked and passed" and "could not check" are different facts.
       for (const u of res.unevaluated_constraints || []) {
+        // "declared by the receipt" would be a lie for the tolerated case (a pre-1.0.1
+        // HALT receipt with an undeclared trailing gap): state only what recomputed.
         process.stdout.write(
           `    ~ not evaluated: ${JSON.stringify(u.constraint)} on ${JSON.stringify(u.entity)} ` +
-          `(no version pinned in the action; declared by the receipt)\n`);
+          `(no version pinned in the action)\n`);
       }
       allOk = allOk && res.ok;
     }

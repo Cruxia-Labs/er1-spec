@@ -342,26 +342,88 @@ case("declared_gap_on_malformed_rule",
                coverage={"exclusions": [],
                          "unevaluated_constraints": [
                              {"entity": "dep:x", "constraint": ">=abc", "reason": "x"}]}),
+     False, "not a version",
+     "An ASSERTED rule whose own version does not parse is MALFORMED, and that refusal wins: "
+     "the verdict recompute reaches the broken rule before the declaration is even examined. "
+     "A malformed rule cannot be laundered into an ALLOW by declaring it.")
+
+case("declared_gap_on_unasserted_malformed_rule",
+     receipt(action={"tool": "pip", "asserts": {"dep:other": "1.0"}, "resource": "req.txt"},
+             action_binding={"tool": "pip", "args_hash": SHA0, "resource": "req.txt"},
+             beliefs=[belief(entity="dep:y", rule="satisfies", value=">=abc")],
+             coverage={"exclusions": [],
+                       "unevaluated_constraints": [
+                           {"entity": "dep:y", "constraint": ">=abc", "reason": "x"}]}),
      False, "no such gap",
-     "A rule whose own version does not parse is MALFORMED, not unevaluable — no action can "
-     "repair it, so it is never declarable. Recomputation excludes it; the declaration is "
-     "therefore phantom.")
+     "The phantom path for a malformed rule: when its entity is NOT asserted, the broken rule "
+     "is never evaluated (same as 1.0.0's short-circuit scope) — but declaring it as a gap is "
+     "still phantom, because recomputation never classifies a malformed rule as unevaluable.")
 
 case("compat_single_component_not_declarable",
      _unpinned(constraint="~=2",
                coverage={"exclusions": [],
                          "unevaluated_constraints": [
                              {"entity": "dep:x", "constraint": "~=2", "reason": "x"}]}),
-     False, "no such gap",
+     False, "at least two version components",
      "`~=2` is invalid per PEP 440 regardless of the proposed version (checked before the "
-     "proposed version is looked at). Declaring it as a coverage gap must not launder a "
-     "malformed rule into an ALLOW.")
+     "proposed version is looked at), and that refusal wins over any declaration. Declaring "
+     "it as a coverage gap must not launder a malformed rule into an ALLOW — a verifier that "
+     "drops the arity check turns this into a declarable gap and verifies, which is what "
+     "this case exists to catch.")
 
-case("unpinned_bare_pin_undeclared",
+case("unpinned_bare_pin_recomputes_halt",
      _unpinned(constraint="2.0"),
-     False, "does not declare",
-     "The bare-pin form of section 3: a version pin with no operator against an unpinned "
-     "install is just as unevaluable, and just as much a silent skip when undeclared.")
+     False, "recomputed HALT",
+     "The bare pin is the STRICT spelling — 'the action must pin this exact version' — and "
+     "an unpinned action VIOLATES it (string inequality, exactly as 1.0.0 evaluated it). It "
+     "is never a declarable gap: the first 1.0.1 draft reclassified this cell and an external "
+     "reviewer showed that flipped a published protective refusal into a verifying ALLOW. "
+     "`==X` is the gap-declarable spelling.")
+
+case("bare_pin_declared_is_phantom",
+     _unpinned(constraint="2.0",
+               coverage={"exclusions": [],
+                         "unevaluated_constraints": [
+                             {"entity": "dep:x", "constraint": "2.0", "reason": "x"}]},
+               decision={"verdict": "HALT", "reason_code": "CONSTRAINT_VIOLATION",
+                         "conflicting_belief_id": "b1"},
+               post_state_root=None),
+     False, "no such gap",
+     "Declaring the bare-pin cell as a gap must be phantom — recomputation classifies only "
+     "OPERATOR constraints as unevaluable. This is the case that catches a verifier drifting "
+     "back to the first draft's reclassification.")
+
+case("phantom_declaration_on_halt",
+     receipt(action={"tool": "pip", "asserts": {"lib:x": "import"}, "resource": "cmd"},
+             action_binding={"tool": "pip", "args_hash": SHA0, "resource": "cmd"},
+             beliefs=[belief(entity="lib:x", rule="excludes", value="*")],
+             coverage={"exclusions": [],
+                       "unevaluated_constraints": [
+                           {"entity": "dep:other", "constraint": ">=1.0", "reason": "forged"}]},
+             decision={"verdict": "HALT", "reason_code": "BANNED_ENTITY",
+                       "conflicting_belief_id": "b1"},
+             post_state_root=None),
+     False, "no such gap",
+     "The undeclared-gap rule is ALLOW-only, but the PHANTOM rule holds under both verdicts: "
+     "a HALT receipt asserting a gap that recomputation cannot find is still lying about "
+     "what was checked.")
+
+case("legacy_halt_undeclared_trailing_gap_is_tolerated",
+     receipt(action={"tool": "pip", "asserts": {"lib:banned": "import", "dep:x": "unknown"},
+                     "resource": "cmd"},
+             action_binding={"tool": "pip", "args_hash": SHA0, "resource": "cmd"},
+             beliefs=[belief(entity="lib:banned", rule="excludes", value="*"),
+                      belief(belief_id="b2", entity="dep:x", rule="satisfies", value=">=2.0")],
+             decision={"verdict": "HALT", "reason_code": "BANNED_ENTITY",
+                       "conflicting_belief_id": "b1"},
+             post_state_root=None),
+     False, "signature",
+     "Control for the ALLOW-only asymmetry, from an external reviewer's counterexample: a "
+     "1.0.0-era HALT receipt whose short-circuited conflict left a trailing unpinned "
+     "constraint unevaluated — and, being pre-1.0.1, undeclared. 1.0.0 VERIFIED this shape, "
+     "so 1.0.1 must too: every predicate check passes and the ONLY failure is the missing "
+     "signature. (The signed twin lives in the golden vectors.) An unevaluable constraint "
+     "can never BE the conflict, so nothing launders through a refusal.")
 
 # ── 12d. the operator grammar the 1.0.1 predicate defines ──
 case("neq_satisfied_recomputes_allow",

@@ -80,7 +80,7 @@
               "constraint": { "type": "string" },
               "reason": { "type": "string", "description": "Human prose; type-checked, content not verified." }
             } },
-          "description": "Constraints PRESENT but not evaluable (e.g. an unpinned install against a version constraint). As of verifier 1.0.1 this set is recomputed and must match exactly: an undeclared gap and a declared-but-absent gap are both malformed. Present only when non-empty, so receipts that evaluated everything are unchanged byte for byte." }
+          "description": "Constraints PRESENT but not evaluable (an unpinned install against an OPERATOR version constraint; bare pins are strict and never declarable). As of verifier 1.0.1 the declared set is recomputed: a declaration recomputation cannot find is malformed under both verdicts; an undeclared gap is malformed when the recomputed verdict is ALLOW and tolerated on HALT. Producers SHOULD omit the field when empty (keeps pre-1.0.1 receipts byte-identical); verifiers accept an empty array." }
       }
     },
     "operator_version": { "type": "string" },

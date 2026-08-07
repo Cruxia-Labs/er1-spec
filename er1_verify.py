@@ -488,15 +488,25 @@ def _constraint_target(constraint_raw):
 
 
 def _unevaluable(proposed_raw, constraint_raw):
-    """True iff the constraint names a version bound but the proposed version does not parse —
-    the ONE case a receipt may declare in coverage.unevaluated_constraints instead of failing.
-    A constraint whose own version is malformed is not unevaluable, it is malformed; a bare
-    non-version constraint is always evaluable (exact string equality)."""
+    """True iff an OPERATOR constraint's proposed version does not parse — the ONE case a
+    receipt may declare in coverage.unevaluated_constraints instead of failing.
+
+    Operator-form only, and that boundary is the compatibility guarantee: 1.0.0 RAISED on
+    every operator-constraint cell where the proposed version failed to parse, so giving
+    those cells meaning breaks no verified receipt. The bare branch never raised — a bare
+    pin against an unparseable version evaluated (string equality, almost always False,
+    HALT) and receipts verified both ways on that reasoning. So the bare pin stays exactly
+    1.0.0: it is the STRICT spelling — "the action must pin this exact version", where an
+    unpinned action is a violation, not a gap. `==X` is the gap-declarable spelling. An
+    external reviewer caught the first draft of 1.0.1 reclassifying the bare cell, which
+    flipped a published protective refusal into a verifying ALLOW.
+
+    A constraint whose own version is malformed is not unevaluable, it is malformed."""
     try:
-        _, target = _constraint_target(constraint_raw)
+        op, _target = _constraint_target(constraint_raw)
     except Er1MalformedReceipt:
         return False
-    if target is None:
+    if op is None:
         return False
     return _parse_ver(proposed_raw) is None
 
@@ -505,19 +515,17 @@ def _satisfies(proposed_raw, constraint_raw):
     op, target = _constraint_target(constraint_raw)
     proposed = _parse_ver(proposed_raw)
     if op is None:
-        # No operator: exact equality of the version, or — when neither side is a version —
-        # exact string equality, which is well defined and language-independent. A version
-        # pin against an unparseable proposed version is not evaluable and cannot gate;
-        # _check_unevaluated has already required the receipt to DECLARE that gap, so
-        # returning True here never lets a silent skip through.
-        if target is None:
+        # No operator — UNCHANGED from 1.0.0, deliberately (see _unevaluable): exact equality
+        # of the version; when either side is not a version, exact string equality, which is
+        # well defined and language-independent. A bare pin against an unparseable proposed
+        # version therefore evaluates (to False, in every real case): the bare pin is the
+        # strict must-pin spelling, never a declarable gap.
+        if target is None or proposed is None:
             return str(proposed_raw) == (
                 constraint_raw if isinstance(constraint_raw, str) else str(constraint_raw))
-        if proposed is None:
-            return True
         return _ver_cmp(proposed, target) == 0
     if proposed is None:
-        return True     # declared-unevaluable; enforced by _check_unevaluated, see above
+        return True     # declared-unevaluable; enforced by _check_unevaluated
     if op == "~=":
         return _compatible(proposed, target)
     cmp = _ver_cmp(proposed, target)
@@ -539,16 +547,26 @@ def _recompute_unevaluated(beliefs, asserts):
     return out
 
 
-def _check_unevaluated(beliefs, asserts, coverage):
-    """coverage.unevaluated_constraints must equal recomputation — EXACTLY.
+def _check_unevaluated(beliefs, asserts, coverage, recomputed_verdict):
+    """coverage.unevaluated_constraints must recompute — with one deliberate asymmetry.
 
     An unpinned install against `satisfies dep:x >=2.0` cannot be evaluated. 1.0.0 refused
     every such receipt, including the honest producer's that RECORDS the gap. The rule now:
     an unevaluable version constraint is acceptable ONLY when the receipt declares it, and
     the declaration must recompute. An undeclared gap is a silent skip — the gate bypass the
     conformance corpus pins. An over-declaration asserts a gap that did not exist, which is
-    a check the receipt claims was skipped but actually ran. Both are malformed; the field
-    is as recomputable as the verdict itself. Returns the recomputed set for reporting."""
+    a check the receipt claims was skipped but actually ran.
+
+    The asymmetry: the undeclared-gap refusal applies ONLY when the recomputed verdict is
+    ALLOW — the declaration exists to distinguish "checked and passed" from "could not
+    check", and on a HALT there is no pass to protect: an unevaluable constraint can never
+    BE the conflict (it evaluates to no-violation), so nothing launders through a refusal.
+    This is also what keeps the compatibility guarantee airtight, per an external reviewer's
+    counterexample: 1.0.0 verified a HALT receipt whose short-circuited conflict left a
+    trailing unpinned constraint unevaluated, and a full-pass refusal here would have broken
+    it. (A 1.0.0-verified ALLOW receipt provably has NO gaps — 1.0.0 raised on them — so
+    requiring the declaration on ALLOW breaks nothing.) Phantom declarations are refused
+    under both verdicts. Returns the recomputed set for reporting."""
     recomputed = _recompute_unevaluated(beliefs, asserts)
     declared = set()
     if isinstance(coverage, dict):
@@ -557,12 +575,14 @@ def _check_unevaluated(beliefs, asserts, coverage):
     # UTF-16 code-unit order, same as canonical-JSON key sorting: JavaScript's default string
     # comparison is code-unit order, so "first mismatch" must mean the same pair everywhere.
     pair_key = lambda p: (_utf16_key(p[0]), _utf16_key(p[1]))  # noqa: E731
-    undeclared = sorted(recomputed - declared, key=pair_key)
-    if undeclared:
-        ent, val = undeclared[0]
-        raise Er1MalformedReceipt(
-            f"constraint {_q(val)} on {_q(ent)} is not evaluable (no version pinned in the "
-            f"action) and the receipt does not declare it in coverage.unevaluated_constraints")
+    if recomputed_verdict == "ALLOW":
+        undeclared = sorted(recomputed - declared, key=pair_key)
+        if undeclared:
+            ent, val = undeclared[0]
+            raise Er1MalformedReceipt(
+                f"constraint {_q(val)} on {_q(ent)} is not evaluable (no version pinned in "
+                f"the action) and the receipt does not declare it in "
+                f"coverage.unevaluated_constraints")
     phantom = sorted(declared - recomputed, key=pair_key)
     if phantom:
         ent, val = phantom[0]
@@ -764,12 +784,13 @@ def verify(receipt: Any, trusted_keys: Optional[set] = None) -> dict:
         if not checks["state_root"]:
             errs.append("pre_state_root mismatch")
 
-        # Before the verdict recomputes: any constraint that is present but unevaluable must
-        # be declared, and every declaration must be real (raises Er1MalformedReceipt if not).
-        unevaluated = _check_unevaluated(beliefs, asserts, receipt.get("coverage"))
-
         c = _conflict(beliefs, asserts)
         recomputed = "HALT" if c is not None else "ALLOW"
+
+        # After the verdict recomputes (the undeclared-gap rule needs it): on ALLOW every
+        # present-but-unevaluable constraint must be declared, and under both verdicts every
+        # declaration must be real (raises Er1MalformedReceipt if not).
+        unevaluated = _check_unevaluated(beliefs, asserts, receipt.get("coverage"), recomputed)
         recorded = receipt["decision"]
         checks["verdict"] = recomputed == recorded.get("verdict")
         if not checks["verdict"]:
@@ -1010,8 +1031,11 @@ def main(argv=None) -> int:
                 # to a fully-checked one — the whole point of the declaration is that "checked
                 # and passed" and "could not check" are different facts.
                 for u in res.get("unevaluated_constraints", []):
+                    # "declared by the receipt" would be a lie for the tolerated case (a
+                    # pre-1.0.1 HALT receipt with an undeclared trailing gap), so the line
+                    # states only what recomputation established.
                     print(f"    ~ not evaluated: {_q(u['constraint'])} on {_q(u['entity'])} "
-                          f"(no version pinned in the action; declared by the receipt)")
+                          f"(no version pinned in the action)")
                 all_ok = all_ok and res["ok"]
     except BrokenPipeError:
         # `er1-verify … | head` closes stdout early. Exiting 0 here would report success for

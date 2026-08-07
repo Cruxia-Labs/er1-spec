@@ -124,7 +124,9 @@ components, each `<= 2**53 - 1`; missing components compare as 0. Nothing coerce
 parsed as 0. Operators: `>=`, `>`, `<=`, `<`, `==`/`=`, `!=`, `~=`, or a bare exact version.
 `~=` is PEP 440 compatible-release and **requires at least two components** — `~=2` is rejected
 rather than degenerating into an unbounded `>=`, and that arity is checked before the proposed
-version is even looked at, so a malformed rule is malformed regardless of the action.
+version is even looked at, so whenever the rule is examined its malformedness does not depend on
+the action. (A defective rule whose entity is never asserted, or that sits after the first
+conflict, is never examined — same evaluation scope as 1.0.0.)
 
 **Whitespace (as of 1.0.1):** the version after an operator may be surrounded by U+0020 —
 `>= 2.0` is how humans write pins — lexed by hand, because `strip()`/`trim()` remove different
@@ -134,19 +136,29 @@ The operator itself must be flush-left, and the PROPOSED version is taken verbat
 **The two failure modes are different facts (as of 1.0.1):**
 
 - A **constraint** whose version does not parse (`>=abc`, `~=2`) is a defect in the RULE — no
-  action can repair it, so the receipt is **malformed**, always.
-- A **proposed** version that does not parse against a well-formed version bound (an unpinned
+  action can repair it, so when it is examined the receipt is **malformed**, and it is never
+  declarable as a coverage gap.
+- A **proposed** version that does not parse against a well-formed OPERATOR bound (an unpinned
   `pip install numpy` against `>=2.0`) is **not evaluable**. The receipt must DECLARE that gap
   in `coverage.unevaluated_constraints` (entries `{entity, constraint, reason?}`), and the
   declared set is part of the verified claim: the verifier recomputes it over every active
   deterministic `satisfies` belief whose entity is asserted — a full pass, independent of the
-  first-conflict short-circuit — and refuses the receipt if the two sets differ in EITHER
-  direction. An undeclared gap is a silent skip (the gate bypass 1.0.0's refusal existed to
-  prevent); an over-declaration asserts a check was skipped that actually ran. A declared,
-  recomputed gap does not violate the constraint, and conformant verifiers surface it
-  (`~ not evaluated: …`) rather than printing a VERIFIED indistinguishable from a fully-checked
-  one. 1.0.0 refused every such receipt as malformed, including the honest producer's; 1.0.1
-  accepts exactly the declared-and-true subset.
+  first-conflict short-circuit. A declaration that recomputation cannot find ("phantom") is
+  refused under both verdicts. An UNDECLARED gap is refused when the recomputed verdict is
+  ALLOW — a silent skip is the gate bypass 1.0.0's refusal existed to prevent — and tolerated
+  when it is HALT: an unevaluable constraint can never BE the conflict (it evaluates to
+  no-violation), so nothing launders through a refusal, and 1.0.0 verified HALT receipts whose
+  short-circuited conflict left trailing constraints unevaluated. A declared, recomputed gap
+  does not violate the constraint, and conformant verifiers surface every recomputed gap
+  (`~ not evaluated: …`) rather than printing a VERIFIED indistinguishable from a
+  fully-checked one.
+- The **bare pin is the strict spelling** and takes neither path: `satisfies dep:x 2.0` means
+  "the action must pin exactly this version". Against an unparseable proposed version it
+  evaluates by exact string equality — almost always a violation, exactly as 1.0.0 evaluated
+  it — and it is never a declarable gap. `==2.0` is the gap-declarable spelling. (The first
+  1.0.1 draft reclassified the bare cell; review showed that flipped a published protective
+  refusal into a verifying ALLOW, so the boundary of "unevaluable" is operator-form only —
+  precisely the cells where 1.0.0 raised and no verified receipt existed.)
 
 ## 5. Signature
 

@@ -3094,7 +3094,7 @@
   },
   {
    "name": "declared_gap_on_malformed_rule",
-   "why": "A rule whose own version does not parse is MALFORMED, not unevaluable — no action can repair it, so it is never declarable. Recomputation excludes it; the declaration is therefore phantom.",
+   "why": "An ASSERTED rule whose own version does not parse is MALFORMED, and that refusal wins: the verdict recompute reaches the broken rule before the declaration is even examined. A malformed rule cannot be laundered into an ALLOW by declaring it.",
    "doc": {
     "schema_version": "action-receipt/v0",
     "receipt_id": "case",
@@ -3151,11 +3151,72 @@
     }
    },
    "expect_ok": false,
+   "error_contains": "not a version"
+  },
+  {
+   "name": "declared_gap_on_unasserted_malformed_rule",
+   "why": "The phantom path for a malformed rule: when its entity is NOT asserted, the broken rule is never evaluated (same as 1.0.0's short-circuit scope) — but declaring it as a gap is still phantom, because recomputation never classifies a malformed rule as unevaluable.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:other": "1.0"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:y",
+      "rule": "satisfies",
+      "value": ">=abc",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "ALLOW",
+     "reason_code": null,
+     "conflicting_belief_id": null
+    },
+    "coverage": {
+     "exclusions": [],
+     "unevaluated_constraints": [
+      {
+       "entity": "dep:y",
+       "constraint": ">=abc",
+       "reason": "x"
+      }
+     ]
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
    "error_contains": "no such gap"
   },
   {
    "name": "compat_single_component_not_declarable",
-   "why": "`~=2` is invalid per PEP 440 regardless of the proposed version (checked before the proposed version is looked at). Declaring it as a coverage gap must not launder a malformed rule into an ALLOW.",
+   "why": "`~=2` is invalid per PEP 440 regardless of the proposed version (checked before the proposed version is looked at), and that refusal wins over any declaration. Declaring it as a coverage gap must not launder a malformed rule into an ALLOW — a verifier that drops the arity check turns this into a declarable gap and verifies, which is what this case exists to catch.",
    "doc": {
     "schema_version": "action-receipt/v0",
     "receipt_id": "case",
@@ -3212,11 +3273,11 @@
     }
    },
    "expect_ok": false,
-   "error_contains": "no such gap"
+   "error_contains": "at least two version components"
   },
   {
-   "name": "unpinned_bare_pin_undeclared",
-   "why": "The bare-pin form of section 3: a version pin with no operator against an unpinned install is just as unevaluable, and just as much a silent skip when undeclared.",
+   "name": "unpinned_bare_pin_recomputes_halt",
+   "why": "The bare pin is the STRICT spelling — 'the action must pin this exact version' — and an unpinned action VIOLATES it (string inequality, exactly as 1.0.0 evaluated it). It is never a declarable gap: the first 1.0.1 draft reclassified this cell and an external reviewer showed that flipped a published protective refusal into a verifying ALLOW. `==X` is the gap-declarable spelling.",
    "doc": {
     "schema_version": "action-receipt/v0",
     "receipt_id": "case",
@@ -3266,7 +3327,193 @@
     }
    },
    "expect_ok": false,
-   "error_contains": "does not declare"
+   "error_contains": "recomputed HALT"
+  },
+  {
+   "name": "bare_pin_declared_is_phantom",
+   "why": "Declaring the bare-pin cell as a gap must be phantom — recomputation classifies only OPERATOR constraints as unevaluable. This is the case that catches a verifier drifting back to the first draft's reclassification.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": null,
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "dep:x": "unknown"
+     },
+     "resource": "req.txt"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "req.txt"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": "2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "HALT",
+     "reason_code": "CONSTRAINT_VIOLATION",
+     "conflicting_belief_id": "b1"
+    },
+    "coverage": {
+     "exclusions": [],
+     "unevaluated_constraints": [
+      {
+       "entity": "dep:x",
+       "constraint": "2.0",
+       "reason": "x"
+      }
+     ]
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "no such gap"
+  },
+  {
+   "name": "phantom_declaration_on_halt",
+   "why": "The undeclared-gap rule is ALLOW-only, but the PHANTOM rule holds under both verdicts: a HALT receipt asserting a gap that recomputation cannot find is still lying about what was checked.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": null,
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "lib:x": "import"
+     },
+     "resource": "cmd"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "cmd"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "lib:x",
+      "rule": "excludes",
+      "value": "*",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "HALT",
+     "reason_code": "BANNED_ENTITY",
+     "conflicting_belief_id": "b1"
+    },
+    "coverage": {
+     "exclusions": [],
+     "unevaluated_constraints": [
+      {
+       "entity": "dep:other",
+       "constraint": ">=1.0",
+       "reason": "forged"
+      }
+     ]
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "no such gap"
+  },
+  {
+   "name": "legacy_halt_undeclared_trailing_gap_is_tolerated",
+   "why": "Control for the ALLOW-only asymmetry, from an external reviewer's counterexample: a 1.0.0-era HALT receipt whose short-circuited conflict left a trailing unpinned constraint unevaluated — and, being pre-1.0.1, undeclared. 1.0.0 VERIFIED this shape, so 1.0.1 must too: every predicate check passes and the ONLY failure is the missing signature. (The signed twin lives in the golden vectors.) An unevaluable constraint can never BE the conflict, so nothing launders through a refusal.",
+   "doc": {
+    "schema_version": "action-receipt/v0",
+    "receipt_id": "case",
+    "created_at": "2026-08-04T00:00:00Z",
+    "chain": {
+     "sequence_number": 0,
+     "prev_receipt_hash": null
+    },
+    "pre_state_root": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "post_state_root": null,
+    "action": {
+     "tool": "pip",
+     "asserts": {
+      "lib:banned": "import",
+      "dep:x": "unknown"
+     },
+     "resource": "cmd"
+    },
+    "action_binding": {
+     "tool": "pip",
+     "args_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+     "resource": "cmd"
+    },
+    "beliefs": [
+     {
+      "belief_id": "b1",
+      "belief_class": "CERTIFIED",
+      "entity": "lib:banned",
+      "rule": "excludes",
+      "value": "*",
+      "source_kind": "deterministic",
+      "status": "active"
+     },
+     {
+      "belief_id": "b2",
+      "belief_class": "CERTIFIED",
+      "entity": "dep:x",
+      "rule": "satisfies",
+      "value": ">=2.0",
+      "source_kind": "deterministic",
+      "status": "active"
+     }
+    ],
+    "decision": {
+     "verdict": "HALT",
+     "reason_code": "BANNED_ENTITY",
+     "conflicting_belief_id": "b1"
+    },
+    "coverage": {
+     "exclusions": []
+    },
+    "operator_version": "corpus/1",
+    "signature": {
+     "algorithm": "ed25519",
+     "public_key": "AAAA",
+     "signature": "AAAA"
+    }
+   },
+   "expect_ok": false,
+   "error_contains": "signature"
   },
   {
    "name": "neq_satisfied_recomputes_allow",

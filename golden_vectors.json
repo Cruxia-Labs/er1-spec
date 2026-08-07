@@ -58,6 +58,11 @@
       "state_root": "sha256:38d5c1fa2e5b9c862eb1db052923c41fc58398e0f46a0db42197690bd2c843b0"
     },
     {
+      "args_hash": "sha256:5936611fc6f113d03b000204a26369c1cd8e4bd4e75401bd7d785be539590643",
+      "name": "bare_pin_unpinned_halt",
+      "state_root": "sha256:9e95a545b5131622f91051a03dbcd222c5a22d0feb0adb6d8fdc1d0986613c10"
+    },
+    {
       "chain_root": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
       "name": "chain_root_from_seed"
     }
@@ -738,6 +743,150 @@
       },
       "receipt_hash": "sha256:096d01737b2feb6d8e024e8910e0961809c0441e113e11a66216bd9ce5c6ef6c",
       "signature": "zIcc3YjkIgsZ_RP8zYm9EkfPVAQghbL3rMh9F9Ptl4BYUm-1sBGxKrfb7cDQniwf7axDsVpLbHE-owg2gRm8AQ",
+      "verdict": "HALT"
+    },
+    {
+      "name": "bare_pin_unpinned_halt",
+      "reason_code": "CONSTRAINT_VIOLATION",
+      "receipt": {
+        "action": {
+          "asserts": {
+            "dep:pinned": "unknown"
+          },
+          "resource": "requirements.txt",
+          "tool": "pip_install"
+        },
+        "action_binding": {
+          "args_hash": "sha256:5936611fc6f113d03b000204a26369c1cd8e4bd4e75401bd7d785be539590643",
+          "resource": "requirements.txt",
+          "tool": "pip_install"
+        },
+        "beliefs": [
+          {
+            "belief_class": "CERTIFIED",
+            "belief_id": "dep:pinned",
+            "entity": "dep:pinned",
+            "rule": "satisfies",
+            "source_kind": "deterministic",
+            "status": "active",
+            "value": "3.1"
+          }
+        ],
+        "chain": {
+          "chain_root_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "prev_receipt_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "sequence_number": 0
+        },
+        "coverage": {
+          "certified_modules": [
+            "typed-config"
+          ],
+          "exclusions": [
+            "nl_extraction"
+          ]
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "decision": {
+          "conflicting_belief_id": "dep:pinned",
+          "current": "3.1",
+          "entity": "dep:pinned",
+          "proposed": "unknown",
+          "reason_code": "CONSTRAINT_VIOLATION",
+          "verdict": "HALT"
+        },
+        "key_tier": "ephemeral",
+        "operator_version": "er1-ref/1",
+        "post_state_root": null,
+        "pre_state_root": "sha256:9e95a545b5131622f91051a03dbcd222c5a22d0feb0adb6d8fdc1d0986613c10",
+        "receipt_id": "golden-0010",
+        "schema_version": "action-receipt/v0",
+        "signature": {
+          "algorithm": "ed25519",
+          "public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+          "signature": "2GQvEL5FNaqz0v8T2wNXmuBAjfxVWifPBirdBAu1eiU_yQDkdpWQdzNITOhurVrdt6c4bZ8UMHhzVJ8Il2B7DA"
+        },
+        "verification_tier": "local",
+        "witnesses": []
+      },
+      "receipt_hash": "sha256:db955840b1a98ddca8a8f14ae038e92740d5c42b84911c10b64a153c734b09d3",
+      "signature": "2GQvEL5FNaqz0v8T2wNXmuBAjfxVWifPBirdBAu1eiU_yQDkdpWQdzNITOhurVrdt6c4bZ8UMHhzVJ8Il2B7DA",
+      "verdict": "HALT"
+    },
+    {
+      "name": "legacy_halt_undeclared_trailing_gap",
+      "reason_code": "BANNED_ENTITY",
+      "receipt": {
+        "action": {
+          "asserts": {
+            "dep:trailing": "unknown",
+            "lib:legacybanned": "import"
+          },
+          "resource": "requirements.txt",
+          "tool": "pip_install"
+        },
+        "action_binding": {
+          "args_hash": "sha256:ef9e6d81258bb11b503785c859d6ba13e189ee72000cbb4053387969d7a06068",
+          "resource": "requirements.txt",
+          "tool": "pip_install"
+        },
+        "beliefs": [
+          {
+            "belief_class": "CERTIFIED",
+            "belief_id": "lib:legacybanned",
+            "entity": "lib:legacybanned",
+            "rule": "excludes",
+            "source_kind": "deterministic",
+            "status": "active",
+            "value": "banned"
+          },
+          {
+            "belief_class": "CERTIFIED",
+            "belief_id": "dep:trailing",
+            "entity": "dep:trailing",
+            "rule": "satisfies",
+            "source_kind": "deterministic",
+            "status": "active",
+            "value": ">=2.0"
+          }
+        ],
+        "chain": {
+          "chain_root_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "prev_receipt_hash": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
+          "sequence_number": 0
+        },
+        "coverage": {
+          "certified_modules": [
+            "typed-config"
+          ],
+          "exclusions": [
+            "nl_extraction"
+          ]
+        },
+        "created_at": "2026-01-01T00:00:00Z",
+        "decision": {
+          "conflicting_belief_id": "lib:legacybanned",
+          "current": "banned",
+          "entity": "lib:legacybanned",
+          "proposed": "import",
+          "reason_code": "BANNED_ENTITY",
+          "verdict": "HALT"
+        },
+        "key_tier": "ephemeral",
+        "operator_version": "er1-ref/1",
+        "post_state_root": null,
+        "pre_state_root": "sha256:ec9fb5c861ec4f2b2fa7c65e961125cd4430b006de949d43c9378e49aa9162e2",
+        "receipt_id": "golden-0011",
+        "schema_version": "action-receipt/v0",
+        "signature": {
+          "algorithm": "ed25519",
+          "public_key": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+          "signature": "poNd1xqb_S8czXjMu5Dk9RQAluaFBS7XVlnZkXxiE94DAbwV_HscfF-3WoN-B1CJhMGFRcqLMowQujmubg7cCQ"
+        },
+        "verification_tier": "local",
+        "witnesses": []
+      },
+      "receipt_hash": "sha256:2840f2db06e5b0a34b7b01f8a2b4c2fe66fa7d878891b57e57d37352c3c54067",
+      "signature": "poNd1xqb_S8czXjMu5Dk9RQAluaFBS7XVlnZkXxiE94DAbwV_HscfF-3WoN-B1CJhMGFRcqLMowQujmubg7cCQ",
       "verdict": "HALT"
     }
   ],
