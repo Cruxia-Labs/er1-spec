@@ -213,7 +213,9 @@ export function validateReceipt(r) {
       }
       requireStr(entry, "entity", `coverage.unevaluated_constraints[${i}]`, true);
       requireStr(entry, "constraint", `coverage.unevaluated_constraints[${i}]`);
-      if ("reason" in entry && typeof entry.reason !== "string") {
+      // hasOwnProperty, not `in`, for the same reason as the field-presence check above —
+      // a reviewer found the first fix stopped one line short of the class.
+      if (Object.prototype.hasOwnProperty.call(entry, "reason") && typeof entry.reason !== "string") {
         throw new Er1MalformedReceipt(
           `coverage.unevaluated_constraints[${i}].reason must be a string`);
       }

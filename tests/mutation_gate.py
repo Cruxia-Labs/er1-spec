@@ -473,6 +473,24 @@ MUTATIONS = [
         "  if (true) {\n",
         "the asymmetry removal in the browser build.",
     ),
+    Mutation(
+        "mjs_reason_prototype_walk",
+        "er1_verify.mjs",
+        '      if (Object.prototype.hasOwnProperty.call(entry, "reason") && typeof entry.reason !== "string") {\n',
+        '      if ("reason" in entry && typeof entry.reason !== "string") {\n',
+        "the own-property check on the entry-level reason — the exact line a round-2 reviewer "
+        "found the first prototype fix stopped short of. With `in`, a polluted "
+        "Object.prototype.reason makes the same signed bytes malformed here and verified in "
+        "Python.",
+    ),
+    Mutation(
+        "browser_reason_prototype_walk",
+        "verify/er1_verify.browser.mjs",
+        '      if (Object.prototype.hasOwnProperty.call(entry, "reason") && typeof entry.reason !== "string") {\n',
+        '      if ("reason" in entry && typeof entry.reason !== "string") {\n',
+        "the same prototype walk in the browser build (the polluted-prototype test drives "
+        "both JS builds under Node — WebCrypto is global there, so nothing is unobservable).",
+    ),
 ]
 
 

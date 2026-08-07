@@ -15,10 +15,10 @@ recorded constraints; the boundary is stated precisely in
 ```
 $ pip install er1-verify
 $ curl -sO https://raw.githubusercontent.com/Cruxia-Labs/er1-spec/v1.0.1/golden_vectors.json
-$ er1-verify golden_vectors.json    # self-test the 10 frozen vectors, offline
+$ er1-verify golden_vectors.json    # self-test the 12 frozen vectors, offline
 VERIFIED ✓  golden_vectors.json:entry[0] name="equals_mismatch_halt"  verdict=HALT (recomputed HALT)  hash=sha256:3c2034ac1c3…  signer=A6EHv_POEL4d… (unpinned)
 VERIFIED ✓  golden_vectors.json:entry[1] name="banned_entity_halt"  verdict=HALT (recomputed HALT)  hash=sha256:94196b8debc…  signer=A6EHv_POEL4d… (unpinned)
-…and eight more; the exit code is 0 only when every receipt verifies.
+…and ten more; the exit code is 0 only when every receipt verifies.
 ```
 
 `(unpinned)` is the verifier being precise: without `--pubkey` it proves a receipt is internally consistent and
@@ -54,7 +54,8 @@ not parse (`>=abc`, `~=2`) stays malformed — that is a defect in the rule, and
 
 Every receipt 1.0.0 verified still verifies, byte for byte — except receipts that already carried a
 `coverage.unevaluated_constraints` field, which had no defined meaning before 1.0.1 and now fails closed if
-its shape or content does not recompute. The frozen vectors grew from 6 to 12.
+its shape or content does not recompute, and except receipts whose `!=` constraints 1.0.0 mis-evaluated as
+bare strings, whose verdicts now recompute correctly. The frozen vectors grew from 6 to 12.
 Full semantics: [`CONFORMANCE.md`](https://github.com/Cruxia-Labs/er1-spec/blob/v1.0.1/CONFORMANCE.md) §4.
 
 ## What's in the spec repo
@@ -67,7 +68,7 @@ pinned to the `v1.0.1` release.
 | [`er1.schema.json`](https://github.com/Cruxia-Labs/er1-spec/blob/v1.0.1/er1.schema.json) | The receipt wire format (JSON Schema 2020-12). |
 | [`er1_verify.py`](https://github.com/Cruxia-Labs/er1-spec/blob/v1.0.1/er1_verify.py) | The **reference verifier** — one self-contained file, stdlib + `cryptography`, zero project imports. This package. |
 | [`er1_verify.mjs`](https://github.com/Cruxia-Labs/er1-spec/blob/v1.0.1/er1_verify.mjs) | A **second verifier** in JavaScript — `node:crypto` only, no npm install. A third runs in the browser: [`verify/er1_verify.browser.mjs`](https://github.com/Cruxia-Labs/er1-spec/blob/v1.0.1/verify/er1_verify.browser.mjs) (WebCrypto only). |
-| [`golden_vectors.json`](https://github.com/Cruxia-Labs/er1-spec/blob/v1.0.1/golden_vectors.json) | Frozen cross-language conformance vectors (a fixed test key + 10 fully-signed receipts). Also ships in this package's sdist. |
+| [`golden_vectors.json`](https://github.com/Cruxia-Labs/er1-spec/blob/v1.0.1/golden_vectors.json) | Frozen cross-language conformance vectors (a fixed test key + 12 fully-signed receipts). Also ships in this package's sdist. |
 | [`CONFORMANCE.md`](https://github.com/Cruxia-Labs/er1-spec/blob/v1.0.1/CONFORMANCE.md) | How any implementation (Rust/WASM/Go/TS) proves itself conformant. |
 | [`SCOPE_OF_CERTIFICATION.md`](https://github.com/Cruxia-Labs/er1-spec/blob/v1.0.1/SCOPE_OF_CERTIFICATION.md) | Plain-English statement of exactly what a receipt does and does **not** certify, and the breach definition. |
 | [`test_conformance.py`](https://github.com/Cruxia-Labs/er1-spec/blob/v1.0.1/test_conformance.py) · [`test_cross_language.py`](https://github.com/Cruxia-Labs/er1-spec/blob/v1.0.1/test_cross_language.py) | The Python verifier accepts every golden receipt and catches tampering; the JS verifier computes byte-identical hashes and the same verdicts. |

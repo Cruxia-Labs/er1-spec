@@ -63,6 +63,11 @@
       "state_root": "sha256:9e95a545b5131622f91051a03dbcd222c5a22d0feb0adb6d8fdc1d0986613c10"
     },
     {
+      "args_hash": "sha256:ef9e6d81258bb11b503785c859d6ba13e189ee72000cbb4053387969d7a06068",
+      "name": "legacy_halt_undeclared_trailing_gap",
+      "state_root": "sha256:ec9fb5c861ec4f2b2fa7c65e961125cd4430b006de949d43c9378e49aa9162e2"
+    },
+    {
       "chain_root": "sha256:5a7b329ae3b15e4f60fabe46916024fccfa2fceb26a1067cc1cf47d8e52bb36e",
       "name": "chain_root_from_seed"
     }

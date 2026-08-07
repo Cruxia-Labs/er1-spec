@@ -217,3 +217,35 @@ def test_js_refuses_invalid_utf8_instead_of_substituting(tmp_path):
         hashes.update(re.findall(r"hash=(\S+)", r.stdout))
         assert _run_py(str(p)).returncode == 1
     assert not hashes, f"byte-distinct malformed inputs produced hashes: {hashes}"
+
+
+def test_polluted_object_prototype_does_not_diverge(tmp_path):
+    """gpt-5-pro's round-2 find, pinned: with Object.prototype polluted (a field-presence name
+    AND a non-string `reason`), a receipt whose declarations carry no own `reason` must verify
+    identically in JS and Python. `in` walks the prototype chain; dicts have no prototype — so
+    every presence check on parsed-JSON objects must be an own-property check. The first fix
+    stopped one line short of the class (the entry-level `reason`); this test covers both."""
+    vectors = json.loads((HERE / "golden_vectors.json").read_text())
+    r = [w for w in vectors["receipts"] if w["name"] == "unpinned_install_declared_gap"][0]["receipt"]
+    r = json.loads(json.dumps(r))
+    del r["coverage"]["unevaluated_constraints"][0]["reason"]   # entry with NO own reason
+    # Python: dropping `reason` breaks the signature but nothing else — the predicate side
+    # (declaration recompute included) must pass, so the ONLY error is the signature.
+    assert ER1.verify(r)["errors"] == ["signature: invalid or missing"]
+    p = tmp_path / "polluted.json"
+    p.write_text(json.dumps(r))
+    for build in ("er1_verify.mjs", "verify/er1_verify.browser.mjs"):
+        script = (
+            "Object.prototype.reason = 5;"
+            "Object.prototype.unevaluated_constraints = 'lol';"
+            f"const {{ verify }} = await import({json.dumps((HERE / build).as_uri())});"
+            f"const doc = JSON.parse(require('fs').readFileSync({json.dumps(str(p))}, 'utf8'));"
+            "const res = await verify(doc);"
+            "console.log(JSON.stringify(res.errors));"
+        )
+        out = subprocess.run([NODE, "--input-type=module", "-e",
+                              "const require = (await import('node:module')).createRequire(import.meta.url);" + script],
+                             capture_output=True, text=True, cwd=HERE)
+        assert out.returncode == 0, (build, out.stderr)
+        assert json.loads(out.stdout) == ["signature: invalid or missing"], (
+            f"polluted prototype diverged {build}: {out.stdout} {out.stderr}")
